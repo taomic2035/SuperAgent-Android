@@ -1,0 +1,32 @@
+# build artifacts
+.gradle/
+build/
+.kotlin/
+.cxx/
+.externalNativeBuild/
+captures/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# node
+node_modules/
+brain/node_modules/
+
+# local config (sdk path, env, secrets)
+local.properties
+*.local.properties
+.env
+.env.*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# logs
+*.log
+
+# third-party native binaries (fetch via scripts, do not commit)
+third/sherpa-onnx/jniLibs/**/*.so
