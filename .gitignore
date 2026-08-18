@@ -30,3 +30,6 @@ Thumbs.db
 
 # third-party native binaries (fetch via scripts, do not commit)
 third/sherpa-onnx/jniLibs/**/*.so
+
+# speech models (fetch via scripts/fetch-models.sh, do not commit)
+body/app/src/main/assets/sherpa/

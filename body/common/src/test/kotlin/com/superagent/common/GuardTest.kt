@@ -2,6 +2,7 @@ package com.superagent.common
 
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 
 class GuardTest {
@@ -32,5 +33,44 @@ class GuardTest {
         assertFalse(CommitBoundaryGuard.isCommitBoundary("付款码"))
         assertFalse(CommitBoundaryGuard.isCommitBoundary("支付方式说明"))
         assertFalse(CommitBoundaryGuard.isCommitBoundary("订单详情"))
+    }
+
+    @Test
+    fun `sensitive session action verbs detected`() {
+        assertTrue(CommitBoundaryGuard.isSensitiveSessionAction("确认转账"))
+        assertTrue(CommitBoundaryGuard.isSensitiveSessionAction("提交申请"))
+        assertTrue(CommitBoundaryGuard.isSensitiveSessionAction("发送消息"))
+        assertTrue(CommitBoundaryGuard.isSensitiveSessionAction("删除记录"))
+        assertFalse(CommitBoundaryGuard.isSensitiveSessionAction("查看详情"))
+        assertFalse(CommitBoundaryGuard.isSensitiveSessionAction("浏览商品"))
+    }
+
+    @Test
+    fun `sensitive url patterns detected`() {
+        assertTrue(CommitBoundaryGuard.isSensitiveUrl("https://shop.example.com/pay/confirm"))
+        assertTrue(CommitBoundaryGuard.isSensitiveUrl("https://shop.example.com/checkout"))
+        assertTrue(CommitBoundaryGuard.isSensitiveUrl("https://m.shop.com/收银台"))
+        assertFalse(CommitBoundaryGuard.isSensitiveUrl("https://shop.example.com/product/123"))
+        assertFalse(CommitBoundaryGuard.isSensitiveUrl("https://shop.example.com/cart"))
+    }
+
+    @Test
+    fun `sensitive app prefixes detected`() {
+        assertTrue(CommitBoundaryGuard.isSensitiveApp("com.icbc"))
+        assertTrue(CommitBoundaryGuard.isSensitiveApp("com.icbc.iphone"))
+        assertTrue(CommitBoundaryGuard.isSensitiveApp("com.eg.android.AlipayGphone"))
+        assertFalse(CommitBoundaryGuard.isSensitiveApp("com.example.shop"))
+        assertFalse(CommitBoundaryGuard.isSensitiveApp("com.icbcx"))
+    }
+
+    @Test
+    fun `boundaries loaded from json`() {
+        val b = CommitBoundaryGuard.getBoundaries()
+        assertTrue(b.commitPhrases.contains("立即支付"))
+        assertTrue(b.sensitiveNavPhrases.contains("收银台"))
+        assertTrue(b.sensitiveAppPrefixes.contains("com.icbc"))
+        assertTrue(b.sensitiveUrlPatterns.contains("checkout"))
+        assertTrue(b.commitPhrases.size >= 10)
+        assertTrue(b.sensitiveAppPrefixes.size >= 10)
     }
 }

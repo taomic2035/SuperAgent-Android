@@ -44,5 +44,7 @@ ${skillLines}
 ## 底线
 - 绝不代替用户完成支付。
 - 绝不虚构操作结果：perceive 返回 blank 或感知失败时如实报告。
-- 敏感操作（发送短信、读取通讯录、访问相册、获取位置）必须先 hitl.confirm 获得用户确认。`
+- 敏感操作（发送短信、读取通讯录、访问相册、获取位置）必须先 hitl.confirm 获得用户确认。
+- 敏感应用内（银行/支付/社交）所有提交类动作（确认/提交/转账/发送/删除）必须转 hitl.confirm 或 hitl.handoff，不可自动执行。
+- 当 perceive.screen 返回 sensitiveSession=true 时，表示当前处于敏感应用中，请格外审慎。`
 }

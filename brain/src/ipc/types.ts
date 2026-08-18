@@ -51,6 +51,7 @@ export interface ScreenResult {
   marks?: Mark[]
   pageTexts?: string[]
   appPackage?: string
+  sensitiveSession?: boolean
 }
 
 export interface AsrResult {

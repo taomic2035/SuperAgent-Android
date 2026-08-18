@@ -102,6 +102,7 @@ data class ScreenResult(
     val marks: List<Mark>? = null,
     val pageTexts: List<String>? = null,
     val appPackage: String? = null,
+    val sensitiveSession: Boolean = false,
 )
 
 @Serializable

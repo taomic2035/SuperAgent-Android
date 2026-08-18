@@ -13,19 +13,19 @@ import java.security.MessageDigest
 
 class ScreenPerceiver(private val accessibilityService: () -> AccessibilityService?) {
 
-    fun perceive(mode: String = "auto"): ScreenResult {
+    fun perceive(mode: String = "auto", inSensitiveSession: Boolean = false): ScreenResult {
         val root = accessibilityService()?.rootInActiveWindow
-            ?: return ScreenResult("", "a11y", true, null, null, null, null)
+            ?: return ScreenResult("", "a11y", true, null, null, null, null, inSensitiveSession)
         val marks = mutableListOf<Mark>()
         val nodes = mutableListOf<A11yNode>()
         val pageTexts = mutableListOf<String>()
         var hasWebView = false
-        walk(root, marks, nodes, pageTexts, 0, { hasWebView = true })
+        var webViewSensitive = false
+        walk(root, marks, nodes, pageTexts, 0, { hasWebView = true }, { webViewSensitive = true })
         if (marks.isEmpty()) {
-            return ScreenResult("", "a11y", true, nodes, null, pageTexts, currentPackage(root))
+            return ScreenResult("", "a11y", true, nodes, null, pageTexts, currentPackage(root), inSensitiveSession)
         }
-        // WebView 敏感页标记：发现 WebView 且页面含敏感上下文 → 全部节点标 sensitive
-        if (hasWebView && pageTexts.any { CommitBoundaryGuard.isSensitiveContext(it) }) {
+        if (hasWebView && (pageTexts.any { CommitBoundaryGuard.isSensitiveContext(it) } || webViewSensitive)) {
             nodes.indices.forEach { idx ->
                 nodes[idx] = nodes[idx].copy(sensitive = true)
             }
@@ -40,6 +40,7 @@ class ScreenPerceiver(private val accessibilityService: () -> AccessibilityServi
             marks = marks,
             pageTexts = pageTexts,
             appPackage = appPkg,
+            sensitiveSession = inSensitiveSession,
         )
     }
 
@@ -50,11 +51,13 @@ class ScreenPerceiver(private val accessibilityService: () -> AccessibilityServi
         pageTexts: MutableList<String>,
         depth: Int,
         onWebView: () -> Unit,
+        onWebViewSensitiveUrl: () -> Unit,
     ) {
         if (depth > 40) return
         val className = node.className?.toString() ?: ""
         if (className.contains("WebView", ignoreCase = true)) {
             onWebView()
+            checkWebViewUrl(node, onWebViewSensitiveUrl)
         }
         val text = node.text?.toString()?.takeIf { it.isNotBlank() }
         val desc = node.contentDescription?.toString()?.takeIf { it.isNotBlank() }
@@ -83,8 +86,16 @@ class ScreenPerceiver(private val accessibilityService: () -> AccessibilityServi
         }
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
-            walk(child, marks, nodes, pageTexts, depth + 1, onWebView)
+            walk(child, marks, nodes, pageTexts, depth + 1, onWebView, onWebViewSensitiveUrl)
             child.recycle()
+        }
+    }
+
+    private fun checkWebViewUrl(node: AccessibilityNodeInfo, onSensitiveUrl: () -> Unit) {
+        val bundle = node.extras ?: return
+        val url = bundle.getCharSequence("url")?.toString() ?: return
+        if (CommitBoundaryGuard.isSensitiveUrl(url)) {
+            onSensitiveUrl()
         }
     }
 

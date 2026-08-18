@@ -1,7 +1,10 @@
 import assert from "node:assert/strict"
 import { startMockBody } from "./mock-body.ts"
 import { BodyClient, BodyRpcError, BodyUnavailableError } from "../src/ipc/client.ts"
-import { isCommitBoundary, isSensitiveContext } from "../src/guards/commitBoundary.ts"
+import {
+  isCommitBoundary, isSensitiveContext, isSensitiveSessionAction,
+  isSensitiveUrl, isSensitiveApp, getBoundaries,
+} from "../src/guards/commitBoundary.ts"
 import { verifyEvidence } from "../src/guards/finish.ts"
 import { SkillIndex } from "../src/skills/index.ts"
 import type { ScreenResult } from "../src/ipc/types.ts"
@@ -22,6 +25,36 @@ async function main(): Promise<void> {
   assert.equal(isCommitBoundary("立即购买"), false)
   assert.equal(isCommitBoundary("支付宝"), false)
   ok("isCommitBoundary 命中/放行/误伤防护正确")
+
+  console.log("== 1b. 敏感会话/URL/App 检测 ==")
+  assert.equal(isSensitiveSessionAction("确认转账"), true)
+  assert.equal(isSensitiveSessionAction("提交申请"), true)
+  assert.equal(isSensitiveSessionAction("查看详情"), false)
+  assert.equal(isSensitiveSessionAction("浏览商品"), false)
+  ok("isSensitiveSessionAction 命中/放行正确")
+
+  assert.equal(isSensitiveUrl("https://shop.example.com/pay/confirm"), true)
+  assert.equal(isSensitiveUrl("https://shop.example.com/checkout"), true)
+  assert.equal(isSensitiveUrl("https://shop.example.com/product/123"), false)
+  ok("isSensitiveUrl 命中/放行正确")
+
+  assert.equal(isSensitiveApp("com.icbc"), true)
+  assert.equal(isSensitiveApp("com.icbc.iphone"), true)
+  assert.equal(isSensitiveApp("com.eg.android.AlipayGphone"), true)
+  assert.equal(isSensitiveApp("com.example.shop"), false)
+  assert.equal(isSensitiveApp("com.icbcx"), false)
+  ok("isSensitiveApp 命中/放行正确")
+
+  console.log("== 1c. 词表一致性 ==")
+  const b = getBoundaries()
+  assert.ok(b.commitPhrases.length >= 10, "commitPhrases 至少 10 条")
+  assert.ok(b.sensitiveNavPhrases.length >= 2, "sensitiveNavPhrases 至少 2 条")
+  assert.ok(b.sensitiveAppPrefixes.length >= 10, "sensitiveAppPrefixes 至少 10 条")
+  assert.ok(b.sensitiveUrlPatterns.length >= 4, "sensitiveUrlPatterns 至少 4 条")
+  assert.ok(b.sensitiveSessionActionVerbs.length >= 5, "sensitiveSessionActionVerbs 至少 5 条")
+  assert.ok(b.commitPhrases.includes("立即支付"))
+  assert.ok(b.sensitiveAppPrefixes.includes("com.icbc"))
+  ok("词表从 commit_boundaries.json 加载且字段完整")
 
   console.log("== 2. 证据核验 ==")
   const screenA: ScreenResult = {

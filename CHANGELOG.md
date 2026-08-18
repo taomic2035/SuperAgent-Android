@@ -6,6 +6,20 @@
 
 ### 已完成
 
+**WP1 提交边界确认**（2026-08-18）
+
+- 词表同源治理：`body/common/src/main/resources/commit_boundaries.json` 为单一来源，含 commitPhrases/sensitiveNavPhrases/sensitiveSessionActionVerbs/sensitiveUrlPatterns/sensitiveAppPrefixes
+- body `Guard.kt` 重写：从 JSON 资源加载词表，新增 `CommitBoundaries` data class + `isSensitiveSessionAction/isSensitiveUrl/isSensitiveApp/getBoundaries`
+- body `SensitiveSession.kt`：委托 `CommitBoundaryGuard`，新增 `onHome()` 退出敏感会话
+- body `ScreenPerceiver.kt`：WebView URL 检测（extras `url` 字段命中 sensitiveUrlPatterns → 全页标 sensitive）、感知传入 `inSensitiveSession` 参数
+- body `Protocol.kt`：`ScreenResult` 新增 `sensitiveSession: Boolean` 字段
+- body `BodyCore.kt`：`perceive.screen` 返回 sensitiveSession、`control.home` 调用 `onHome()` 退出敏感会话
+- body `Hitl.kt`：采用 Kestrel `CompletableDeferred+CAS` 模式替代 `CompletableFuture`；confirm 通知聚合（连续确认合并为"全部同意/全部拒绝"）
+- body `GuardTest.kt`：扩展至 7 项测试覆盖新方法
+- brain `types.ts`：`ScreenResult.sensitiveSession` 同步
+- brain `commitBoundary.ts`：从同源 JSON 读取词表，新增 `isSensitiveSessionAction/isSensitiveUrl/isSensitiveApp`
+- 文档同步：docs/05 §2.2 词表治理+会话退出+URL检测；docs/06 BD-06/08.1/08.2 状态更新；docs/07 §2.1 ScreenResult+§5.2 词表+变更记录 v2.1
+
 **WP0 安全闭合 + 协议 v2 + 阻塞修复**（2026-08-18）
 
 - 随机 token 鉴权（256bit，filesDir 持久化，ADR-3）
@@ -28,10 +42,10 @@
 
 ### 待办（P0 剩余）
 
-- WP1：提交边界确认模型（brain + body 双侧守卫、敏感 App 注册表、WebView 敏感标记）
 - WP2：技能生命周期状态机 + recovery mode
 - WP3：会话持久化 + 语音环骨架
 - WP5：fetch-models 脚本（锁 zh voices）+ 装机脚本 + GLM live tool-call 测试
+- WP1 验收：M1 红线真机演示（TC-04/05/06 执行留痕）
 
 ## 版本说明
 

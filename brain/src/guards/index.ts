@@ -1,6 +1,7 @@
 import type { AfterToolCallContext, BeforeToolCallContext } from "@earendil-works/pi-agent-core"
-import { isCommitBoundary } from "./commitBoundary.ts"
-import { addTrace } from "../runState.ts"
+import { isCommitBoundary, isSensitiveApp, isSensitiveSessionAction } from "./commitBoundary.ts"
+import { addTrace, getRun } from "../runState.ts"
+import type { ScreenResult } from "../ipc/types.ts"
 
 const LABEL_TOOLS = new Set(["control.selectOption", "control.selectSpec"])
 const TRACE_TOOLS = new Set([
@@ -15,6 +16,12 @@ const TRACE_TOOLS = new Set([
   "control.launch",
 ])
 
+let inSensitiveSession = false
+
+export function resetSensitiveSession(): void {
+  inSensitiveSession = false
+}
+
 export async function beforeToolCall(
   context: BeforeToolCallContext,
 ): Promise<{ block: true; reason: string; terminate: true } | undefined> {
@@ -27,12 +34,21 @@ export async function beforeToolCall(
         terminate: true,
       }
     }
+    if (inSensitiveSession && isSensitiveSessionAction(label) && !isCommitBoundary(label)) {
+      return {
+        block: true,
+        reason: `敏感会话内确认动作：「${label}」在敏感应用中需人工确认。请调用 hitl.confirm 请求用户确认后再执行。`,
+        terminate: true,
+      }
+    }
   }
   return undefined
 }
 
 export async function afterToolCall(context: AfterToolCallContext): Promise<undefined> {
-  if (!context.isError && TRACE_TOOLS.has(context.toolCall.name)) {
+  if (context.isError) return undefined
+
+  if (TRACE_TOOLS.has(context.toolCall.name)) {
     const details = (context.result?.details ?? {}) as { located?: boolean; signature?: string }
     addTrace({
       tool: context.toolCall.name,
@@ -42,5 +58,37 @@ export async function afterToolCall(context: AfterToolCallContext): Promise<unde
       timestamp: Date.now(),
     })
   }
+
+  if (context.toolCall.name === "control.launch") {
+    const pkg = String((context.args as Record<string, unknown>)?.pkg ?? "")
+    if (pkg && isSensitiveApp(pkg)) {
+      inSensitiveSession = true
+    } else if (pkg) {
+      inSensitiveSession = false
+    }
+  }
+
+  if (context.toolCall.name === "control.home") {
+    inSensitiveSession = false
+  }
+
+  if (context.toolCall.name === "perceive.screen") {
+    const content = context.result?.content
+    if (content && Array.isArray(content)) {
+      for (const c of content) {
+        if (c.type === "text") {
+          try {
+            const screen = JSON.parse(c.text) as ScreenResult
+            if (screen.sensitiveSession) {
+              inSensitiveSession = true
+            }
+          } catch {
+            // parse failed, ignore
+          }
+        }
+      }
+    }
+  }
+
   return undefined
 }

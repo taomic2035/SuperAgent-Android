@@ -1,31 +1,72 @@
 package com.superagent.common
 
-/**
- * 提交边界词表（docs/07 §2.2 v2）。
- * 从"内容子串匹配"升级为"短语精确包含"：仅多字短语，避免误伤"支付宝/付款码/支付方式说明"。
- */
-private val COMMIT_PHRASES = listOf(
-    "立即支付", "确认支付", "立即付款", "确认付款",
-    "提交订单", "确认下单", "立即下单",
-    "支付密码", "验证码支付", "指纹支付", "面容支付", "免密支付",
-    "输密码", "确认收货",
-)
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 
-/** 导航到敏感页（不拦截，但标记页面进入敏感会话） */
-private val SENSITIVE_NAV_PHRASES = listOf(
-    "去支付", "去结算", "收银台",
+@Serializable
+data class CommitBoundaries(
+    val commitPhrases: List<String> = emptyList(),
+    val sensitiveNavPhrases: List<String> = emptyList(),
+    val sensitiveSessionActionVerbs: List<String> = emptyList(),
+    val sensitiveUrlPatterns: List<String> = emptyList(),
+    val sensitiveAppPrefixes: List<String> = emptyList(),
 )
 
 object CommitBoundaryGuard {
-    /** 该动作是否跨过提交边界（不可逆外部效应）→ 必须拦截转 HITL */
-    fun isCommitBoundary(label: String): Boolean {
-        val normalized = label.replace(Regex("\\s+"), "")
-        return COMMIT_PHRASES.any { normalized.contains(it) }
+    private val json = Json { ignoreUnknownKeys = true }
+
+    private val _boundaries: CommitBoundaries by lazy {
+        loadBoundaries()
     }
 
-    /** 该文字是否指向敏感页（导航动作，不拦截但标记） */
+    private fun loadBoundaries(): CommitBoundaries {
+        val resource = Thread.currentThread().contextClassLoader
+            ?.getResourceAsStream("commit_boundaries.json")
+            ?: return CommitBoundaries(
+                commitPhrases = listOf(
+                    "立即支付", "确认支付", "立即付款", "确认付款",
+                    "提交订单", "确认下单", "立即下单",
+                    "支付密码", "验证码支付", "指纹支付", "面容支付", "免密支付",
+                    "输密码", "确认收货",
+                ),
+                sensitiveNavPhrases = listOf("去支付", "去结算", "收银台"),
+                sensitiveSessionActionVerbs = listOf("确认", "提交", "转账", "发送", "删除", "修改密码", "实名认证"),
+                sensitiveUrlPatterns = listOf("pay", "checkout", "cashier", "收银", "结算", "payment"),
+                sensitiveAppPrefixes = listOf(
+                    "com.chinamworld", "com.ccb", "com.icbc", "com.abchina", "com.bankcomm",
+                    "com.cmbchina", "com.chinamobile.boce", "com.spdb", "com.cebbank",
+                    "com.citic", "com.cgb", "com.pab", "com.epay", "com.bankofchina",
+                    "com.eg.android.AlipayGphone", "com.tencent.mm", "com.unionpay",
+                    "com.tencent.mobileqq", "com.tencent.qqlive", "com.sina.weibo",
+                    "com.ss.android.article", "com.netease.mail",
+                ),
+            )
+        val text = resource.bufferedReader(Charsets.UTF_8).readText()
+        return json.decodeFromString<CommitBoundaries>(text)
+    }
+
+    fun isCommitBoundary(label: String): Boolean {
+        val normalized = label.replace(Regex("\\s+"), "")
+        return _boundaries.commitPhrases.any { normalized.contains(it) }
+    }
+
     fun isSensitiveContext(label: String): Boolean {
         val normalized = label.replace(Regex("\\s+"), "")
-        return SENSITIVE_NAV_PHRASES.any { normalized.contains(it) } || isCommitBoundary(normalized)
+        return _boundaries.sensitiveNavPhrases.any { normalized.contains(it) } || isCommitBoundary(normalized)
     }
+
+    fun isSensitiveSessionAction(label: String): Boolean {
+        val normalized = label.replace(Regex("\\s+"), "")
+        return _boundaries.sensitiveSessionActionVerbs.any { normalized.contains(it) }
+    }
+
+    fun isSensitiveUrl(url: String): Boolean {
+        val lower = url.lowercase()
+        return _boundaries.sensitiveUrlPatterns.any { lower.contains(it.lowercase()) }
+    }
+
+    fun isSensitiveApp(pkg: String): Boolean =
+        _boundaries.sensitiveAppPrefixes.any { pkg == it || pkg.startsWith("$it.") }
+
+    fun getBoundaries(): CommitBoundaries = _boundaries
 }

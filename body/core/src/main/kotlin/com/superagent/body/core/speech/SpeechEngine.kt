@@ -36,7 +36,7 @@ class SpeechUnavailable(message: String) : Exception(message)
  * - 声纹: 3D-Speaker eres2net（assets/sherpa/models/3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx）
  * 模型缺失时优雅降级：抛 SpeechUnavailable，由服务层转成体侧错误码。
  */
-class SpeechEngine(context: Context) {
+class SpeechEngine(private val context: Context) {
     private val assets = context.assets
     private val dir = File(context.filesDir, "speaker-embeddings")
 
@@ -50,6 +50,33 @@ class SpeechEngine(context: Context) {
     private var activeTrack: AudioTrack? = null
 
     private val recorder = AudioRecorder(File(context.cacheDir, "audio"))
+
+    /** Kokoro 的 espeak-ng-data 必须落盘（sherpa 无法直接从 assets 读目录），首次使用时复制。 */
+    private val espeakDir: String by lazy {
+        val target = File(context.filesDir, "sherpa/espeak-ng-data")
+        if (!target.exists() && hasAsset("sherpa/models/kokoro-multi-lang-v1_0/espeak-ng-data/lang")) {
+            copyAssetsDir(
+                "sherpa/models/kokoro-multi-lang-v1_0/espeak-ng-data",
+                target,
+            )
+        }
+        target.absolutePath
+    }
+
+    private fun copyAssetsDir(assetPath: String, target: File) {
+        target.mkdirs()
+        assets.list(assetPath)?.forEach { name ->
+            val childAsset = "$assetPath/$name"
+            val childTarget = File(target, name)
+            if (assets.list(childAsset) != null) {
+                copyAssetsDir(childAsset, childTarget)
+            } else {
+                assets.open(childAsset).use { input ->
+                    childTarget.outputStream().use { output -> input.copyTo(output) }
+                }
+            }
+        }
+    }
 
     fun isReady(): Map<String, Boolean> = mapOf(
         "asr" to hasAsset("sherpa/models/sensevoice-ctc-int8-zh/model.onnx"),
@@ -74,11 +101,13 @@ class SpeechEngine(context: Context) {
         }
     }
 
-    /** 播报文本。refAudio/refText/instruct 走 ZipVoice 克隆（P0：Kokoro 多音色）。 */
+    /** 播报文本。refAudio/refText/instruct 走 ZipVoice 克隆（P0：Kokoro 多音色）。线程安全：串行播放。 */
     fun say(text: String, voice: VoiceConfig?): SayResult {
-        val t = tts() ?: throw SpeechUnavailable("TTS 模型未安装（scripts/fetch-models）")
-        interrupt()
-        playing.set(true)
+        val wake = wakeLock()
+        synchronized(this) {
+            val t = tts() ?: throw SpeechUnavailable("TTS 模型未安装（scripts/fetch-models）")
+            interrupt()
+            playing.set(true)
         val sampleRate = t.sampleRate()
         val track = AudioTrack.Builder()
             .setAudioAttributes(
@@ -112,8 +141,21 @@ class SpeechEngine(context: Context) {
         track.release()
         activeTrack = null
         playing.set(false)
+        wake?.release()
         return SayResult("speaker")
+        }
     }
+
+    /** 播放期间持 CPU 锁，防后台播放被系统（LMK/省电）打断。 */
+    private fun wakeLock(): android.os.PowerManager.WakeLock? =
+        runCatching {
+            val pm = context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+            pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "superagent:tts")
+                .apply {
+                    setReferenceCounted(false)
+                    acquire(60_000)
+                }
+        }.getOrNull()
 
     fun interrupt() {
         playing.set(false)
@@ -208,7 +250,7 @@ class SpeechEngine(context: Context) {
                         model = "$modelDir/model.onnx",
                         voices = "$modelDir/voices.bin",
                         tokens = "$modelDir/tokens.txt",
-                        dataDir = "$modelDir/espeak-ng-data",
+                        dataDir = espeakDir,
                         lang = "auto",
                     ),
                     numThreads = 4,

@@ -17,6 +17,7 @@ import com.superagent.body.core.speech.VoiceConfig
 import com.superagent.common.ActionResult
 import com.superagent.common.JsonElement
 import com.superagent.common.RpcResponse
+import com.superagent.common.SayResult
 import com.superagent.common.json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -72,7 +73,7 @@ class BodyCore(
                 return@rpc RpcResponse.failure(req.id, "A11Y_DISCONNECTED", "无障碍服务未连接，请在设置中开启", "a11y")
             }
             val mode = req.params?.jsonObject?.get("mode")?.toString()?.trim('"') ?: "auto"
-            ok(req, perceiver.perceive(mode))
+            ok(req, perceiver.perceive(mode, sensitiveSession.inSensitiveSession))
         }
 
         server.rpc("control.tap") { req ->
@@ -133,7 +134,10 @@ class BodyCore(
         }
 
         server.rpc("control.back") { req -> ok(req, controller.back()) }
-        server.rpc("control.home") { req -> ok(req, controller.home()) }
+        server.rpc("control.home") { req ->
+            sensitiveSession.onHome()
+            ok(req, controller.home())
+        }
 
         server.rpc("control.launch") { req ->
             val pkg = params(req).string("pkg") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 pkg")
@@ -157,11 +161,19 @@ class BodyCore(
                     json.decodeFromJsonElement<VoiceConfig>(it)
                 }.getOrNull()
             }
-            runCatching { speech.say(text, voice) }
-                .fold(
-                    { ok(req, it) },
-                    { e -> if (e is SpeechUnavailable) speechError(req, e) else throw e },
-                )
+            // 播报不阻塞 RPC（首次加载 310MB Kokoro 模型可超 30s 硬超时）：
+            // 请求即回，合成+播放切后台线程。
+            runCatching { speech.isReady()["tts"] == true }
+                .getOrDefault(false)
+                .takeIf { it } ?: return@rpc speechError(req, SpeechUnavailable("TTS 模型未安装（scripts/fetch-models）"))
+            val play = speech
+            val t = text
+            val v = voice
+            Thread {
+                runCatching { play.say(t, v) }
+                    .onFailure { e -> Log.e("BodyCore", "TTS 播放失败", e) }
+            }.start()
+            ok(req, SayResult("speaker"))
         }
 
         server.rpc("speech.interrupt") { req ->
