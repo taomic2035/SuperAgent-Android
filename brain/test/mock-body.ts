@@ -152,11 +152,21 @@ export function startMockBody(options: MockBodyOptions): Promise<{ port: number;
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`)
     if (req.method === "GET" && url.pathname === "/health") {
-      return void sendJson(res, 200, { ok: true, bootId, protocolVersion: 2, uptimeMs: 1234, services: { a11y: true, speech: true } })
+      return void sendJson(res, 200, {
+        id: 0,
+        ok: true,
+        result: { ok: true, bootId, protocolVersion: 2, uptimeMs: 1234, services: { a11y: true, speech: true } },
+        error: null,
+      })
     }
     if (req.method === "GET" && url.pathname === "/events") {
       const since = Number.parseInt(url.searchParams.get("since") ?? "0", 10)
-      return void sendJson(res, 200, events.filter((e) => e.seq > since))
+      return void sendJson(res, 200, {
+        id: 0,
+        ok: true,
+        result: events.filter((e) => e.seq > since),
+        error: null,
+      })
     }
     if (req.method === "POST" && url.pathname === "/rpc") {
       const raw = await readBody(req)

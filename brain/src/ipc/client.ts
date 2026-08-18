@@ -75,7 +75,9 @@ export class BodyClient {
         signal: AbortSignal.timeout(3_000),
       })
       if (!res.ok) return { ok: false, bootId: "", protocolVersion: 0, uptimeMs: 0, services: {} }
-      return (await res.json()) as HealthStatus
+      const raw = (await res.json()) as HealthStatus & { result?: HealthStatus }
+      const h = raw.result ?? raw
+      return h
     } catch {
       return { ok: false, bootId: "", protocolVersion: 0, uptimeMs: 0, services: {} }
     }
@@ -88,7 +90,8 @@ export class BodyClient {
         signal: AbortSignal.timeout(5_000),
       })
       if (!res.ok) return []
-      return (await res.json()) as BodyEvent[]
+      const raw = (await res.json()) as { result?: BodyEvent[]; ok: boolean }
+      return Array.isArray(raw) ? raw : raw.result ?? []
     } catch {
       return []
     }

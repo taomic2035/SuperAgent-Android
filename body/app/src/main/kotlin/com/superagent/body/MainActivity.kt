@@ -13,54 +13,43 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 
 class MainActivity : AppCompatActivity() {
+    private lateinit var statusText: TextView
+    private lateinit var btnService: Button
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(androidx.appcompat.R.layout.abc_screen_simple)
-        val root = findViewById<android.widget.FrameLayout>(androidx.appcompat.R.id.action_bar_root)
-        root.removeAllViews()
-        val container = android.widget.LinearLayout(this).apply {
-            orientation = android.widget.LinearLayout.VERTICAL
-            setPadding(48, 96, 48, 48)
-        }
-        root.addView(container)
+        setContentView(R.layout.activity_main)
+        statusText = findViewById(R.id.status)
+        btnService = findViewById(R.id.btn_service)
+        val btnA11y = findViewById<Button>(R.id.btn_a11y)
+        val btnPerms = findViewById<Button>(R.id.btn_perms)
 
-        val title = TextView(this).apply {
-            text = "超级AI助手 · 躯体"
-            textSize = 22f
-        }
-        val status = TextView(this).apply {
-            text = statusText()
-            textSize = 14f
-        }
-        val btnStart = Button(this).apply { text = "启动躯体服务（前台）" }
-        val btnA11y = Button(this).apply { text = "打开无障碍设置" }
-        val btnPerms = Button(this).apply { text = "授权麦克风/通知" }
-
-        btnStart.setOnClickListener {
+        btnService.setOnClickListener {
             BodyService.start(this)
-            status.text = statusText()
+            btnService.text = "服务运行中"
+            btnService.isEnabled = false
+            refreshStatus()
         }
-        btnA11y.setOnClickListener {
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-        }
+        btnA11y.setOnClickListener { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
         btnPerms.setOnClickListener {
             val perms = mutableListOf(Manifest.permission.RECORD_AUDIO)
             if (Build.VERSION.SDK_INT >= 33) perms.add(Manifest.permission.POST_NOTIFICATIONS)
             ActivityCompat.requestPermissions(this, perms.toTypedArray(), 1)
         }
-
-        container.addView(title)
-        container.addView(status)
-        container.addView(btnStart)
-        container.addView(btnA11y)
-        container.addView(btnPerms)
     }
 
-    private fun statusText(): String {
+    override fun onResume() {
+        super.onResume()
+        refreshStatus()
+    }
+
+    private fun refreshStatus() {
         val a11y = BodyAccessibilityService.instance != null
-        val mic = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
-            PackageManager.PERMISSION_GRANTED
-        return "无障碍服务：${if (a11y) "已连接" else "未开启"}\n麦克风：${if (mic) "已授权" else "未授权"}"
+        val mic = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        statusText.text = buildString {
+            append("服务：${if (btnService.isEnabled.not()) "运行中" else "未启动"}\n")
+            append("无障碍：${if (a11y) "✓" else "✗"}\n")
+            append("麦克风：${if (mic) "✓" else "✗"}")
+        }
     }
 }

@@ -46,10 +46,10 @@ export function buildTools(body: BodyClient, personas: Record<string, Persona>):
     {
       name: "control.tap",
       label: "点击坐标",
-      description: "在归一化坐标 (0-999) 处点击屏幕。",
+      description: "在像素坐标处点击屏幕（与 perceive.screen 的 marks.center 同单位）。",
       parameters: Type.Object({
-        x: Type.Number({ description: "归一化横坐标 0-999" }),
-        y: Type.Number({ description: "归一化纵坐标 0-999" }),
+        x: Type.Number({ description: "像素横坐标" }),
+        y: Type.Number({ description: "像素纵坐标" }),
       }),
       execute: async (toolCallId, params: any) => {
         const result = await body.rpc<ActionResult>("control.tap", params, idem("control.tap", toolCallId))
@@ -60,7 +60,7 @@ export function buildTools(body: BodyClient, personas: Record<string, Persona>):
     {
       name: "control.longPress",
       label: "长按",
-      description: "在归一化坐标处长按。",
+      description: "在像素坐标处长按。",
       parameters: Type.Object({
         x: Type.Number(),
         y: Type.Number(),
@@ -75,7 +75,7 @@ export function buildTools(body: BodyClient, personas: Record<string, Persona>):
     {
       name: "control.swipe",
       label: "滑动",
-      description: "从 (fromX,fromY) 滑到 (toX,toY)，坐标归一化 0-999。",
+      description: "从 (fromX,fromY) 滑到 (toX,toY)，像素坐标。",
       parameters: Type.Object({
         fromX: Type.Number(),
         fromY: Type.Number(),

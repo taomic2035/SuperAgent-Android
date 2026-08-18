@@ -20,7 +20,7 @@ class Controller(
 ) {
     private val scope = CoroutineScope(Dispatchers.Main)
 
-    /** 点击归一化坐标 (0-999)。带 2px 微位移（Kestrel 实证：部分系统需先移动再抬起）。 */
+    /** 点击像素坐标（与 perceive.screen 返回的 bounds/center 同单位）。带 2px 微位移（Kestrel 实证：部分系统需先移动再抬起）。 */
     suspend fun tap(x: Int, y: Int): ActionResult = dispatchGesture(x, y, x + 2, y + 2, 40L)
 
     suspend fun longPress(x: Int, y: Int, durationMs: Long = 600): ActionResult =
@@ -29,8 +29,8 @@ class Controller(
     suspend fun swipe(fromX: Int, fromY: Int, toX: Int, toY: Int, durationMs: Long = 300): ActionResult {
         val svc = accessibilityService() ?: return ActionResult(false, null, "无障碍服务未连接")
         val path = Path().apply {
-            moveTo(sx(context, fromX).toFloat(), sy(context, fromY).toFloat())
-            lineTo(sx(context, toX).toFloat(), sy(context, toY).toFloat())
+            moveTo(fromX.toFloat(), fromY.toFloat())
+            lineTo(toX.toFloat(), toY.toFloat())
         }
         val gesture = GestureDescription.Builder()
             .addStroke(GestureDescription.StrokeDescription(path, 0, durationMs))
@@ -41,8 +41,8 @@ class Controller(
     private suspend fun dispatchGesture(fromX: Int, fromY: Int, toX: Int, toY: Int, durationMs: Long): ActionResult {
         val svc = accessibilityService() ?: return ActionResult(false, null, "无障碍服务未连接")
         val path = Path().apply {
-            moveTo(sx(context, fromX).toFloat(), sy(context, fromY).toFloat())
-            lineTo(sx(context, toX).toFloat(), sy(context, toY).toFloat())
+            moveTo(fromX.toFloat(), fromY.toFloat())
+            lineTo(toX.toFloat(), toY.toFloat())
         }
         val gesture = GestureDescription.Builder()
             .addStroke(GestureDescription.StrokeDescription(path, 0, durationMs))
@@ -129,10 +129,4 @@ class Controller(
         }
         return null
     }
-
-    private fun sx(context: Context, x: Int): Int =
-        (context.resources.displayMetrics.widthPixels * x / 1000.0).toInt()
-
-    private fun sy(context: Context, y: Int): Int =
-        (context.resources.displayMetrics.heightPixels * y / 1000.0).toInt()
 }
