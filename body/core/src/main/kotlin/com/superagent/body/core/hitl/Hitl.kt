@@ -9,6 +9,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
 import androidx.core.app.NotificationCompat
+import androidx.core.app.RemoteInput
 import com.superagent.body.core.events.EventBus
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.buildJsonObject
@@ -21,15 +22,15 @@ import java.util.concurrent.TimeUnit
 
 /**
  * 人工接管（HITL）：通知 + 动态注册 Receiver。
- * - confirm：同意/拒绝 两个通知动作
- * - ask：通知回复文本（通知栏内联输入，API 24+ 支持）
- * - handoff：通知 + 前台标记，人工接管后点「接管完成」
+ * - confirm：同意/拒绝 两个通知按钮
+ * - ask：通知栏 RemoteInput 内联回复（API 24+ 支持）
+ * - handoff：通知 + 接管完成按钮
  * 超时默认拒绝/空答（denial is data）。
  */
 class Hitl(private val context: Context, private val events: EventBus) {
     private val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
     private val pending = ConcurrentHashMap<Long, CompletableFuture<JsonElement>>()
-    private val requests = ConcurrentHashMap<Long, String>()
+    private val requestTypes = ConcurrentHashMap<Long, String>()
     private var seq = 0L
 
     private val receiver = object : BroadcastReceiver() {
@@ -41,9 +42,11 @@ class Hitl(private val context: Context, private val events: EventBus) {
                     buildJsonObject { put("approved", intent.getBooleanExtra("approved", false)) },
                 )
                 ACTION_ANSWER -> {
-                    val answer = intent.getStringExtra(Intent.EXTRA_TEXT) ?: ""
+                    val results = RemoteInput.getResultsFromIntent(intent)
+                    val answer = results?.getCharSequence(KEY_REPLY)?.toString() ?: ""
                     future.complete(buildJsonObject { put("answer", answer) })
                 }
+                ACTION_HANDOFF -> future.complete(buildJsonObject { put("taken", true) })
             }
         }
     }
@@ -54,30 +57,32 @@ class Hitl(private val context: Context, private val events: EventBus) {
                 NotificationChannel(CHANNEL, "人工接管", NotificationManager.IMPORTANCE_HIGH),
             )
         }
-        val filter = IntentFilter().apply { addAction(ACTION_CONFIRM); addAction(ACTION_ANSWER) }
+        val filter = IntentFilter().apply {
+            addAction(ACTION_CONFIRM); addAction(ACTION_ANSWER); addAction(ACTION_HANDOFF)
+        }
         context.registerReceiver(receiver, filter)
     }
 
     suspend fun confirm(prompt: String): Boolean {
-        val result = await(requests(prompt)) ?: return false
+        val result = await(requests(prompt, "confirm")) ?: return false
         return result.jsonObject["approved"]?.jsonPrimitive?.content == "true"
     }
 
     suspend fun ask(prompt: String): String {
-        val result = await(requests(prompt)) ?: return ""
+        val result = await(requests(prompt, "ask")) ?: return ""
         return result.jsonObject["answer"]?.jsonPrimitive?.content ?: ""
     }
 
     suspend fun handoff(reason: String): Boolean {
-        val result = await(requests("人工接管：$reason")) ?: return false
+        val result = await(requests("人工接管：$reason", "handoff")) ?: return false
         return result.jsonObject["taken"]?.jsonPrimitive?.content == "true"
     }
 
-    private fun requests(prompt: String): Long {
+    private fun requests(prompt: String, type: String): Long {
         val id = ++seq
-        requests[id] = prompt
+        requestTypes[id] = type
         pending[id] = CompletableFuture()
-        post(id, prompt)
+        post(id, prompt, type)
         return id
     }
 
@@ -89,8 +94,11 @@ class Hitl(private val context: Context, private val events: EventBus) {
             null
         }
         if (result != null) {
-            val approved = result.jsonObject["approved"]?.jsonPrimitive?.content ?: ""
-            events.emit("hitl", buildJsonObject { put("id", id); put("approved", approved) })
+            val approved = result.jsonObject["approved"]?.jsonPrimitive?.content
+                ?: result.jsonObject["answer"]?.jsonPrimitive?.content
+                ?: result.jsonObject["taken"]?.jsonPrimitive?.content
+                ?: ""
+            events.emit("hitl", buildJsonObject { put("id", id); put("result", approved) })
         }
         cleanup(id)
         return result
@@ -98,25 +106,37 @@ class Hitl(private val context: Context, private val events: EventBus) {
 
     private fun cleanup(id: Long) {
         pending.remove(id)
-        requests.remove(id)
+        requestTypes.remove(id)
         nm.cancel(id.toInt())
     }
 
-    private fun post(id: Long, prompt: String) {
-        val confirmIntent = Intent(ACTION_CONFIRM).setPackage(context.packageName).putExtra("id", id).putExtra("approved", true)
-        val denyIntent = Intent(ACTION_CONFIRM).setPackage(context.packageName).putExtra("id", id).putExtra("approved", false)
-        val answerIntent = Intent(ACTION_ANSWER).setPackage(context.packageName).putExtra("id", id)
-        val notification = NotificationCompat.Builder(context, CHANNEL)
+    private fun post(id: Long, prompt: String, type: String) {
+        val builder = NotificationCompat.Builder(context, CHANNEL)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentTitle("超级AI助手 · 需要你")
             .setContentText(prompt)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(false)
-            .addAction(0, "同意", pi(confirmIntent))
-            .addAction(0, "拒绝", pi(denyIntent))
-            .addAction(0, "回复", pi(answerIntent))
-            .build()
-        nm.notify(id.toInt(), notification)
+
+        when (type) {
+            "confirm" -> {
+                val yes = Intent(ACTION_CONFIRM).setPackage(context.packageName).putExtra("id", id).putExtra("approved", true)
+                val no = Intent(ACTION_CONFIRM).setPackage(context.packageName).putExtra("id", id).putExtra("approved", false)
+                builder.addAction(0, "同意", pi(yes)).addAction(0, "拒绝", pi(no))
+            }
+            "ask" -> {
+                val replyIntent = Intent(ACTION_ANSWER).setPackage(context.packageName).putExtra("id", id)
+                val remoteInput = RemoteInput.Builder(KEY_REPLY).setLabel("回复…").build()
+                val replyAction = NotificationCompat.Action.Builder(0, "回复", pi(replyIntent))
+                    .addRemoteInput(remoteInput).build()
+                builder.addAction(replyAction)
+            }
+            "handoff" -> {
+                val done = Intent(ACTION_HANDOFF).setPackage(context.packageName).putExtra("id", id)
+                builder.addAction(0, "接管完成", pi(done))
+            }
+        }
+        nm.notify(id.toInt(), builder.build())
     }
 
     private fun pi(intent: Intent): PendingIntent =
@@ -131,5 +151,7 @@ class Hitl(private val context: Context, private val events: EventBus) {
         private const val CHANNEL = "super-agent-hitl"
         private const val ACTION_CONFIRM = "com.superagent.body.HITL_CONFIRM"
         private const val ACTION_ANSWER = "com.superagent.body.HITL_ANSWER"
+        private const val ACTION_HANDOFF = "com.superagent.body.HITL_HANDOFF"
+        private const val KEY_REPLY = "super_agent_reply"
     }
 }

@@ -4,7 +4,7 @@ import com.superagent.body.core.control.Controller
 import com.superagent.body.core.control.OptionSelector
 import com.superagent.body.core.events.EventBus
 import com.superagent.body.core.perception.ScreenPerceiver
-import com.superagent.common.PaymentGuard
+import com.superagent.common.CommitBoundaryGuard
 import com.superagent.common.SkillLearnResult
 import com.superagent.common.SkillListResult
 import com.superagent.common.SkillMeta
@@ -84,7 +84,7 @@ class SkillStore(
         var completed = 0
         for (step in skill.steps) {
             val label = step.args["label"]
-            if (label != null && PaymentGuard.isPaymentTarget(label)) {
+            if (label != null && CommitBoundaryGuard.isCommitBoundary(label)) {
                 return SkillRunResult("sensitive_handoff", completed)
             }
             val ok = executeStep(step)

@@ -41,6 +41,7 @@ class BodyCore(
     private val controller = Controller(context, a11y)
     private val selector = OptionSelector(perceiver, controller)
     private val speech = SpeechEngine(context)
+    private val sensitiveSession = com.superagent.body.core.security.SensitiveSessionTracker()
     private val hardware = HardwareService(context)
     private val hitl = Hitl(context, events)
     private val skills = SkillStore(File(context.filesDir, "skills"), perceiver, selector, controller, events)
@@ -106,6 +107,9 @@ class BodyCore(
             val p = params(req)
             val label = p.string("label") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 label")
             val near = p.near()
+            if (sensitiveSession.needsExtraConfirm(label)) {
+                return@rpc RpcResponse.failure(req.id, "COMMIT_BOUNDARY", "敏感会话内确认动作需人工确认", "sensitive_session")
+            }
             val result = selector.select(label, near, verifySelected = false)
             if (result.note == "COMMIT_BOUNDARY") {
                 return@rpc RpcResponse.failure(req.id, "COMMIT_BOUNDARY", "提交边界拦截（躯体侧兜底）", "commit")
@@ -117,6 +121,9 @@ class BodyCore(
             val p = params(req)
             val label = p.string("label") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 label")
             val near = p.near()
+            if (sensitiveSession.needsExtraConfirm(label)) {
+                return@rpc RpcResponse.failure(req.id, "COMMIT_BOUNDARY", "敏感会话内确认动作需人工确认", "sensitive_session")
+            }
             val result = selector.select(label, near, verifySelected = true)
             if (result.note == "COMMIT_BOUNDARY") {
                 return@rpc RpcResponse.failure(req.id, "COMMIT_BOUNDARY", "提交边界拦截（躯体侧兜底）", "commit")
@@ -129,6 +136,7 @@ class BodyCore(
 
         server.rpc("control.launch") { req ->
             val pkg = params(req).string("pkg") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 pkg")
+            sensitiveSession.onLaunch(pkg)
             ok(req, controller.launch(pkg))
         }
 

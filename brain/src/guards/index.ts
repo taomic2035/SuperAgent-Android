@@ -1,5 +1,5 @@
 import type { AfterToolCallContext, BeforeToolCallContext } from "@earendil-works/pi-agent-core"
-import { checkPaymentTarget } from "./payment.ts"
+import { isCommitBoundary } from "./commitBoundary.ts"
 import { addTrace } from "../runState.ts"
 
 const LABEL_TOOLS = new Set(["control.selectOption", "control.selectSpec"])
@@ -20,10 +20,10 @@ export async function beforeToolCall(
 ): Promise<{ block: true; reason: string; terminate: true } | undefined> {
   if (LABEL_TOOLS.has(context.toolCall.name)) {
     const label = String((context.args as Record<string, unknown>)?.label ?? "")
-    if (checkPaymentTarget(label)) {
+    if (isCommitBoundary(label)) {
       return {
         block: true,
-        reason: `支付红线：目标「${label}」属于支付操作，绝不自动触碰。请调用 hitl.handoff 转人工接管。`,
+        reason: `提交边界：目标「${label}」属于不可逆操作（支付/下单确认），绝不自动触碰。请调用 hitl.handoff 转人工接管。`,
         terminate: true,
       }
     }

@@ -5,24 +5,30 @@ import android.graphics.Rect
 import android.view.accessibility.AccessibilityNodeInfo
 import com.superagent.common.A11yNode
 import com.superagent.common.Bounds
+import com.superagent.common.CommitBoundaryGuard
 import com.superagent.common.Mark
 import com.superagent.common.Point
 import com.superagent.common.ScreenResult
 import java.security.MessageDigest
 
-/** 支付敏感词（与 common.PaymentGuard 一致的双保险：感知阶段打标，点选阶段拦截）。 */
-private val SENSITIVE_WORDS = listOf("支付", "付款", "收银台", "输密码", "验证码")
-
 class ScreenPerceiver(private val accessibilityService: () -> AccessibilityService?) {
 
     fun perceive(mode: String = "auto"): ScreenResult {
-        val root = accessibilityService()?.rootInActiveWindow ?: return ScreenResult("", "a11y", true, null, null, null, null)
+        val root = accessibilityService()?.rootInActiveWindow
+            ?: return ScreenResult("", "a11y", true, null, null, null, null)
         val marks = mutableListOf<Mark>()
         val nodes = mutableListOf<A11yNode>()
         val pageTexts = mutableListOf<String>()
-        walk(root, marks, nodes, pageTexts, 0)
+        var hasWebView = false
+        walk(root, marks, nodes, pageTexts, 0, { hasWebView = true })
         if (marks.isEmpty()) {
             return ScreenResult("", "a11y", true, nodes, null, pageTexts, currentPackage(root))
+        }
+        // WebView 敏感页标记：发现 WebView 且页面含敏感上下文 → 全部节点标 sensitive
+        if (hasWebView && pageTexts.any { CommitBoundaryGuard.isSensitiveContext(it) }) {
+            nodes.indices.forEach { idx ->
+                nodes[idx] = nodes[idx].copy(sensitive = true)
+            }
         }
         val signature = signature(marks)
         val appPkg = currentPackage(root)
@@ -43,8 +49,13 @@ class ScreenPerceiver(private val accessibilityService: () -> AccessibilityServi
         nodes: MutableList<A11yNode>,
         pageTexts: MutableList<String>,
         depth: Int,
+        onWebView: () -> Unit,
     ) {
         if (depth > 40) return
+        val className = node.className?.toString() ?: ""
+        if (className.contains("WebView", ignoreCase = true)) {
+            onWebView()
+        }
         val text = node.text?.toString()?.takeIf { it.isNotBlank() }
         val desc = node.contentDescription?.toString()?.takeIf { it.isNotBlank() }
         val label = when {
@@ -64,7 +75,7 @@ class ScreenPerceiver(private val accessibilityService: () -> AccessibilityServi
                         label = label,
                         clickable = node.isClickable,
                         selected = node.isSelected.takeIf { node.isSelected },
-                        sensitive = SENSITIVE_WORDS.any { label.contains(it) },
+                        sensitive = CommitBoundaryGuard.isSensitiveContext(label),
                         bounds = Bounds(rect.left, rect.top, rect.right, rect.bottom),
                     ),
                 )
@@ -72,7 +83,7 @@ class ScreenPerceiver(private val accessibilityService: () -> AccessibilityServi
         }
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
-            walk(child, marks, nodes, pageTexts, depth + 1)
+            walk(child, marks, nodes, pageTexts, depth + 1, onWebView)
             child.recycle()
         }
     }

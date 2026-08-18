@@ -5,7 +5,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import com.superagent.body.core.perception.ScreenPerceiver
 import com.superagent.common.ActionResult
 import com.superagent.common.Mark
-import com.superagent.common.PaymentGuard
+import com.superagent.common.CommitBoundaryGuard
 import com.superagent.common.Point
 import kotlinx.coroutines.delay
 import kotlin.math.abs
@@ -25,7 +25,7 @@ class OptionSelector(
      */
     suspend fun select(label: String, near: PointArg? = null, verifySelected: Boolean = false): ActionResult {
         val normalized = label.replace(Regex("\\s+"), "")
-        if (PaymentGuard.isPaymentTarget(normalized)) {
+        if (CommitBoundaryGuard.isCommitBoundary(normalized)) {
             return ActionResult(false, null, "COMMIT_BOUNDARY")
         }
         val screen = perceiver.perceive("a11y")

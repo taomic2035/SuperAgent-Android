@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { startMockBody } from "./mock-body.ts"
 import { BodyClient, BodyRpcError, BodyUnavailableError } from "../src/ipc/client.ts"
-import { checkPaymentTarget } from "../src/guards/payment.ts"
+import { isCommitBoundary, isSensitiveContext } from "../src/guards/commitBoundary.ts"
 import { verifyEvidence } from "../src/guards/finish.ts"
 import { SkillIndex } from "../src/skills/index.ts"
 import type { ScreenResult } from "../src/ipc/types.ts"
@@ -13,12 +13,15 @@ function ok(name: string): void {
 }
 
 async function main(): Promise<void> {
-  console.log("== 1. 支付红线 ==")
-  assert.equal(checkPaymentTarget("立即支付"), true)
-  assert.equal(checkPaymentTarget("收银台"), true)
-  assert.equal(checkPaymentTarget("加入购物车"), false)
-  assert.equal(checkPaymentTarget("立即购买"), false)
-  ok("checkPaymentTarget 命中/放行正确")
+  console.log("== 1. 提交边界 ==")
+  assert.equal(isCommitBoundary("立即支付"), true)
+  assert.equal(isCommitBoundary("提交订单"), true)
+  assert.equal(isCommitBoundary("收银台"), false)
+  assert.equal(isSensitiveContext("收银台"), true)
+  assert.equal(isCommitBoundary("加入购物车"), false)
+  assert.equal(isCommitBoundary("立即购买"), false)
+  assert.equal(isCommitBoundary("支付宝"), false)
+  ok("isCommitBoundary 命中/放行/误伤防护正确")
 
   console.log("== 2. 证据核验 ==")
   const screenA: ScreenResult = {
