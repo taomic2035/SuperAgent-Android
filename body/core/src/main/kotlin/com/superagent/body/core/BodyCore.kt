@@ -220,8 +220,19 @@ class BodyCore(
             val name = params(req).string("name") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 name")
             runCatching { skills.run(name) }
                 .fold(
-                    { ok(req, it) },
-                    { RpcResponse.failure(req.id, "SKILL_RUN", it.message ?: "回放失败") },
+                    { outcome ->
+                        when (outcome) {
+                            is com.superagent.body.core.skills.SkillRunOutcome.Success ->
+                                ok(req, com.superagent.common.SkillRunResult("success", outcome.completedSteps))
+                            is com.superagent.body.core.skills.SkillRunOutcome.SensitiveHandoff ->
+                                ok(req, com.superagent.common.SkillRunResult("sensitive_handoff", outcome.completedSteps))
+                            is com.superagent.body.core.skills.SkillRunOutcome.Stale ->
+                                RpcResponse.failure(req.id, "SKILL_STALE",
+                                    "失配在第${outcome.failedStepIndex}步(完成${outcome.completedSteps}步)，工具=${outcome.failedStep.tool}",
+                                    "stale")
+                        }
+                    },
+                    { RpcResponse.failure(req.id, "SKILL_NOT_FOUND", it.message ?: "回放失败") },
                 )
         }
 
@@ -236,6 +247,17 @@ class BodyCore(
                 .fold(
                     { ok(req, it) },
                     { RpcResponse.failure(req.id, "SKILL_LEARN", it.message ?: "固化失败") },
+                )
+        }
+
+        server.rpc("skill.feedback") { req ->
+            val p = params(req)
+            val name = p.string("name") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 name")
+            val success = p.json.get("success")?.jsonPrimitive?.content == "true"
+            runCatching { skills.feedback(name, success) }
+                .fold(
+                    { emptyOk(req) },
+                    { RpcResponse.failure(req.id, "SKILL_NOT_FOUND", it.message ?: "反馈失败") },
                 )
         }
 

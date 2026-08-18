@@ -123,7 +123,11 @@ export function startMockBody(options: MockBodyOptions): Promise<{ port: number;
         const p = params as { name?: string }
         if (p.name === "order-milk-tea") return void sendJson(res, 200, reply({ result: "success", completedSteps: 6 }))
         if (p.name === "open-weather") return void sendJson(res, 200, reply({ result: "success", completedSteps: 2 }))
+        if (p.name === "stale-skill") return void sendJson(res, 200, fail("SKILL_STALE", "失配在第2步(完成1步)，工具=control.selectOption", "stale"))
         return void sendJson(res, 200, fail("SKILL_NOT_FOUND", `技能不存在: ${p.name}`))
+      }
+      case "skill.feedback": {
+        return void sendJson(res, 200, reply({}))
       }
       case "skill.learn": {
         const p = params as { goal?: string; appPackage?: string }

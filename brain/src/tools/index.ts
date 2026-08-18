@@ -295,6 +295,19 @@ export function buildTools(body: BodyClient, personas: Record<string, Persona>):
       },
     },
     {
+      name: "skill.feedback",
+      label: "技能反馈",
+      description: "任务结束后回报技能使用成败，驱动技能状态机（candidate→verified→active→deprecated）。",
+      parameters: Type.Object({
+        name: Type.String({ description: "技能名" }),
+        success: Type.Boolean({ description: "本次使用是否成功" }),
+      }),
+      execute: async (_id, params: any) => {
+        await body.rpc("skill.feedback", params)
+        return { content: [{ type: "text", text: `已反馈技能 ${params.name}：${params.success ? "成功" : "失败"}` }], details: {} }
+      },
+    },
+    {
       name: "hitl.confirm",
       label: "请求确认",
       description: "敏感操作前请求用户确认。approved=false 表示用户拒绝。",
