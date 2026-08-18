@@ -58,11 +58,17 @@ class BodyService : Service() {
             Intent(this, BodyService::class.java).setAction(ACTION_STOP),
             android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,
         )
+        val triggerIntent = android.app.PendingIntent.getBroadcast(
+            this, 2,
+            com.superagent.body.core.voice.VoiceLoop.triggerIntent(this),
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,
+        )
         return NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.ic_menu_compass)
             .setContentTitle("超级AI助手 · 躯体")
             .setContentText("http://127.0.0.1:8765 （本地 RPC 服务运行中）")
             .setOngoing(true)
+            .addAction(0, "说话", triggerIntent)
             .addAction(0, "停止", stopIntent)
             .build()
     }

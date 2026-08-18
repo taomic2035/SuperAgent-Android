@@ -42,6 +42,7 @@ class BodyCore(
     private val selector = OptionSelector(perceiver, controller)
     private val speech = SpeechEngine(context)
     private val sensitiveSession = com.superagent.body.core.security.SensitiveSessionTracker()
+    private val voiceLoop = com.superagent.body.core.voice.VoiceLoop(context, events)
     private val hardware = HardwareService(context)
     private val hitl = Hitl(context, events)
     private val skills = SkillStore(File(context.filesDir, "skills"), perceiver, selector, controller, events)
