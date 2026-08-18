@@ -11,6 +11,7 @@
     "dev": "tsx src/main.ts",
     "mock": "tsx test/mock-body.ts",
     "smoke": "tsx test/smoke.ts",
+    "live-glm": "tsx test/live-glm.ts",
     "typecheck": "tsc --noEmit",
     "start": "tsx src/main.ts"
   },
