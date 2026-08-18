@@ -4,7 +4,7 @@ import { stdin, stdout } from "node:process"
 import { BodyClient } from "./ipc/client.ts"
 import { resolveModel } from "./model.ts"
 import { buildTools } from "./tools/index.ts"
-import { beforeToolCall, afterToolCall } from "./guards/index.ts"
+import { beforeToolCall, afterToolCall, resetSensitiveSession } from "./guards/index.ts"
 import { loadPersonas } from "./personas/personas.ts"
 import { buildSystemPrompt } from "./personas/promptBuilder.ts"
 import { SkillIndex } from "./skills/index.ts"
@@ -81,6 +81,7 @@ async function runRepl(agent: Agent): Promise<void> {
     if (!input) continue
     if (input === "exit" || input === "quit") break
     beginRun(input)
+    resetSensitiveSession()
     try {
       console.log("\n助手> ")
       responseBuffer = ""
@@ -121,6 +122,7 @@ async function voiceTurn(body: BodyClient, agent: Agent): Promise<void> {
     if (!asr.text.trim()) return
     console.log(`你(语音)> ${asr.text}`)
     beginRun(asr.text)
+    resetSensitiveSession()
     console.log("助手> ")
     responseBuffer = ""
     await agent.prompt(asr.text)

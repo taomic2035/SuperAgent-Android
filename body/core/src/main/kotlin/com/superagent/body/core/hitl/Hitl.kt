@@ -185,9 +185,23 @@ class Hitl(private val context: Context, private val events: EventBus) {
         pending.remove(id)
         requestTypes.remove(id)
         synchronized(aggregateConfirms) {
+            val wasInAggregate = aggregateConfirms.any { it.id == id }
             aggregateConfirms.removeAll { it.id == id }
+            if (wasInAggregate) {
+                // 聚合成员：不 cancel(id.toInt())——若该 id 是 aggregateNotifyId（首成员）
+                // 会误取消整个聚合通知，使其他成员失去入口。
+                if (aggregateConfirms.isEmpty()) {
+                    val nid = aggregateNotifyId
+                    aggregateNotifyId = -1
+                    if (nid != -1) nm.cancel(nid)
+                } else {
+                    updateAggregateNotification()
+                }
+            } else {
+                // 非聚合请求（ask/handoff/独立 confirm）：按自身 id 取消
+                nm.cancel(id.toInt())
+            }
         }
-        nm.cancel(id.toInt())
     }
 
     private fun emitEvent(id: Long, result: HitlResult) {

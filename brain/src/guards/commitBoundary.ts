@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs"
+import { readFileSync, existsSync } from "node:fs"
 import { join, dirname } from "node:path"
 
 interface CommitBoundariesJson {
@@ -9,32 +9,45 @@ interface CommitBoundariesJson {
   sensitiveAppPrefixes: string[]
 }
 
+const FALLBACK: CommitBoundariesJson = {
+  commitPhrases: [
+    "立即支付", "确认支付", "立即付款", "确认付款",
+    "提交订单", "确认下单", "立即下单",
+    "支付密码", "验证码支付", "指纹支付", "面容支付", "免密支付",
+    "输密码", "确认收货",
+  ],
+  sensitiveNavPhrases: ["去支付", "去结算", "收银台"],
+  sensitiveSessionActionVerbs: ["确认", "提交", "转账", "发送", "删除", "修改密码", "实名认证"],
+  sensitiveUrlPatterns: ["pay", "checkout", "cashier", "收银", "结算", "payment"],
+  sensitiveAppPrefixes: [
+    "com.chinamworld", "com.ccb", "com.icbc", "com.abchina", "com.bankcomm",
+    "com.cmbchina", "com.chinamobile.boce", "com.spdb", "com.cebbank",
+    "com.citic", "com.cgb", "com.pab", "com.epay", "com.bankofchina",
+    "com.eg.android.AlipayGphone", "com.tencent.mm", "com.unionpay",
+    "com.tencent.mobileqq", "com.tencent.qqlive", "com.sina.weibo",
+    "com.ss.android.article", "com.netease.mail",
+  ],
+}
+
+/**
+ * 词表单一主源：body/common/src/main/resources/commit_boundaries.json。
+ * 查找顺序：① body 源码树（开发同源，即时反映修改）② brain 资源副本（Termux/部署，
+ *   由 `npm run sync-vocab` 从主源同步）③ 硬编码 fallback。
+ */
 function loadBoundaries(): CommitBoundariesJson {
-  const jsonPath = join(dirname(import.meta.url.replace("file://", "")), "../../../body/common/src/main/resources/commit_boundaries.json")
-  try {
-    const raw = readFileSync(jsonPath, "utf8")
-    return JSON.parse(raw) as CommitBoundariesJson
-  } catch {
-    return {
-      commitPhrases: [
-        "立即支付", "确认支付", "立即付款", "确认付款",
-        "提交订单", "确认下单", "立即下单",
-        "支付密码", "验证码支付", "指纹支付", "面容支付", "免密支付",
-        "输密码", "确认收货",
-      ],
-      sensitiveNavPhrases: ["去支付", "去结算", "收银台"],
-      sensitiveSessionActionVerbs: ["确认", "提交", "转账", "发送", "删除", "修改密码", "实名认证"],
-      sensitiveUrlPatterns: ["pay", "checkout", "cashier", "收银", "结算", "payment"],
-      sensitiveAppPrefixes: [
-        "com.chinamworld", "com.ccb", "com.icbc", "com.abchina", "com.bankcomm",
-        "com.cmbchina", "com.chinamobile.boce", "com.spdb", "com.cebbank",
-        "com.citic", "com.cgb", "com.pab", "com.epay", "com.bankofchina",
-        "com.eg.android.AlipayGphone", "com.tencent.mm", "com.unionpay",
-        "com.tencent.mobileqq", "com.tencent.qqlive", "com.sina.weibo",
-        "com.ss.android.article", "com.netease.mail",
-      ],
+  const here = dirname(import.meta.url.replace("file://", ""))
+  const candidates = [
+    join(here, "../../../body/common/src/main/resources/commit_boundaries.json"),
+    join(here, "commit_boundaries.json"),
+  ]
+  for (const p of candidates) {
+    try {
+      if (existsSync(p)) return JSON.parse(readFileSync(p, "utf8")) as CommitBoundariesJson
+    } catch {
+      // 继续尝试下一个候选路径
     }
   }
+  return FALLBACK
 }
 
 const boundaries = loadBoundaries()

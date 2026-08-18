@@ -79,9 +79,8 @@ export async function afterToolCall(context: AfterToolCallContext): Promise<unde
         if (c.type === "text") {
           try {
             const screen = JSON.parse(c.text) as ScreenResult
-            if (screen.sensitiveSession) {
-              inSensitiveSession = true
-            }
+            // 以 body 侧 sensitiveSession 为准（含 false）：手动切 App 时 brain 状态跟随刷新
+            inSensitiveSession = screen.sensitiveSession === true
           } catch {
             // parse failed, ignore
           }
