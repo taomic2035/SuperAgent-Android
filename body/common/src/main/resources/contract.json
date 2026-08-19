@@ -27,6 +27,7 @@
     "HitlConfirmResult": { "fields": ["approved"] },
     "HitlAskResult": { "fields": ["answer"] },
     "HitlHandoffResult": { "fields": ["taken"] },
-    "TraceStep": { "fields": ["tool", "args", "located", "signature", "timestamp"], "brainOnly": ["sensitive", "resultKind"] }
+    "TraceStep": { "fields": ["tool", "args", "located", "signature", "timestamp"], "brainOnly": ["sensitive", "resultKind"] },
+    "BrainEvent": { "fields": ["taskId", "seq", "state", "stepIndex", "displayText", "requiresUser", "resultKind", "timestamp"] }
   }
 }

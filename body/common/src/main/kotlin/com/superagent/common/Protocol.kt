@@ -202,3 +202,23 @@ data class TraceStep(
     val signature: String? = null,
     val timestamp: Long,
 )
+
+/**
+ * UI-0 事件回灌（docs/12 §7 UX 最低契约）：brain → body → 悬浮层。
+ * 类型化封闭契约：禁止开放 payload 覆盖权威字段；seq 单调可去重；taskId 隔离旧任务事件。
+ */
+@Serializable
+data class BrainEvent(
+    val taskId: String,
+    val seq: Long,
+    /** 有限枚举（docs/12 §6 状态机）：prompt_start/act/act_done/hitl_wait/blocked/finish/error */
+    val state: String,
+    val stepIndex: Int? = null,
+    /** 已脱敏、用户可读、长度受限的显示文本 */
+    val displayText: String = "",
+    /** 纯展示 none / 普通控制 control / 可信确认 confirm / 人工接管 handoff */
+    val requiresUser: String = "none",
+    /** finish 必填：success/failed/aborted/unknown_side_effect */
+    val resultKind: String? = null,
+    val timestamp: Long,
+)

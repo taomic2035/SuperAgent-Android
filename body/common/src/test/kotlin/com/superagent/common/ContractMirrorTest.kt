@@ -43,6 +43,7 @@ class ContractMirrorTest {
         "HitlAskResult" to serializer<HitlAskResult>(),
         "HitlHandoffResult" to serializer<HitlHandoffResult>(),
         "TraceStep" to serializer<TraceStep>(),
+        "BrainEvent" to serializer<BrainEvent>(),
     )
 
     @Test

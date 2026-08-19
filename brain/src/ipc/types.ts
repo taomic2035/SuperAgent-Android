@@ -139,3 +139,16 @@ export interface TraceStep {
   /** 结果分类：ok / not_located / handoff / finish_rejected / need_human / recover。 */
   resultKind?: string
 }
+
+/** UI-0 事件回灌（docs/12 §7 UX 最低契约）：brain → body → 悬浮层，类型化封闭契约。 */
+export interface BrainEvent {
+  taskId: string
+  seq: number
+  /** 有限枚举（docs/12 §6）：prompt_start/act/act_done/hitl_wait/blocked/finish/error */
+  state: string
+  stepIndex?: number
+  displayText: string
+  requiresUser: string
+  resultKind?: string
+  timestamp: number
+}

@@ -341,6 +341,16 @@ class BodyCore(
             val reason = params(req).string("reason") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 reason")
             ok(req, com.superagent.common.HitlHandoffResult(hitl.handoff(reason)))
         }
+
+        // UI-0（docs/12 §7 / CT-06）：brain 回灌事件通道——类型化 BrainEvent（契约入 contract.json），
+        // 悬浮层订阅渲染。body 保持 UI 唯一 owner；状态机去重排序由 UI 层做。
+        server.rpc("brain.event") { req ->
+            val event = req.params?.let {
+                runCatching { json.decodeFromJsonElement<com.superagent.common.BrainEvent>(it) }.getOrNull()
+            } ?: return@rpc bad(req, "BAD_PARAMS", "BrainEvent 缺字段或不合法（以 contract.json 为准）")
+            events.emit("brain", json.encodeToJsonElement(event))
+            emptyOk(req)
+        }
     }
 
     /** 成功动作后附加**稳定后**签名（#18 learn 存 expectedSignature；#24 等页面过渡结束再采样）。 */
