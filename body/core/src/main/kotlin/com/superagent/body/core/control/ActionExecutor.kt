@@ -44,7 +44,9 @@ class ActionExecutor(
             is Action.LongPress -> gate(action.x, action.y)?.let { return Result.GateBlocked(it) }
             is Action.Select -> {
                 if (sensitive.needsExtraConfirm(action.label)) {
-                    return Result.GateBlocked(ActionGate.Violation.SensitiveSession(action.label))
+                    return Result.GateBlocked(
+                        ActionGate.Violation.SensitiveSession(action.label, sensitive.issueNonce(action.label)),
+                    )
                 }
                 if (CommitBoundaryGuard.isCommitBoundary(action.label)) {
                     return Result.GateBlocked(ActionGate.Violation.Commit(action.label))
@@ -52,7 +54,9 @@ class ActionExecutor(
             }
             is Action.SelectSpec -> {
                 if (sensitive.needsExtraConfirm(action.label)) {
-                    return Result.GateBlocked(ActionGate.Violation.SensitiveSession(action.label))
+                    return Result.GateBlocked(
+                        ActionGate.Violation.SensitiveSession(action.label, sensitive.issueNonce(action.label)),
+                    )
                 }
                 if (CommitBoundaryGuard.isCommitBoundary(action.label)) {
                     return Result.GateBlocked(ActionGate.Violation.Commit(action.label))

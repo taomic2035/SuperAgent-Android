@@ -2,7 +2,7 @@
   "$comment": "CT-05 契约镜像：brain src/ipc/types.ts ↔ body common Protocol.kt 的共享真源。字段名集合一致即镜像成立；brainOnly=brain 侧扩展字段（body ignoreUnknownKeys 兼容）；bodyOnly=body 独有子结构（brain 内联表达）。改任一侧字段必须同步本文件，两侧镜像测试（brain npm run contract / body :common:test ContractMirrorTest）会拦漂移。",
   "types": {
     "RpcRequest": { "fields": ["id", "method", "params", "idempotencyKey"] },
-    "RpcError": { "fields": ["code", "message", "reason"], "bodyOnly": true },
+    "RpcError": { "fields": ["code", "message", "reason", "nonce"], "bodyOnly": true },
     "RpcResponse": { "fields": ["id", "ok", "result", "error"] },
     "Bounds": { "fields": ["left", "top", "right", "bottom"], "bodyOnly": true },
     "Point": { "fields": ["x", "y"], "bodyOnly": true },

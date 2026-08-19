@@ -15,11 +15,14 @@ export class BodyUnavailableError extends Error {
 export class BodyRpcError extends Error {
   readonly code: string
   readonly reason?: string
-  constructor(code: string, message: string, reason?: string) {
+  /** AD-10：敏感动作被拒时的一次性 nonce（hitl.confirm 回传用） */
+  readonly nonce?: string
+  constructor(code: string, message: string, reason?: string, nonce?: string) {
     super(message)
     this.name = "BodyRpcError"
     this.code = code
     this.reason = reason
+    this.nonce = nonce
   }
 }
 
@@ -71,7 +74,7 @@ export class BodyClient {
   async rpc<T>(method: string, params: unknown, idempotencyKey?: string, timeoutMs = this.timeoutMs): Promise<T> {
     const response = await this.rawRpc({ id: nextId++, method, params, idempotencyKey }, timeoutMs)
     if (!response.ok) {
-      throw new BodyRpcError(response.error.code, response.error.message, response.error.reason)
+      throw new BodyRpcError(response.error.code, response.error.message, response.error.reason, (response.error as { nonce?: string }).nonce)
     }
     return response.result as T
   }

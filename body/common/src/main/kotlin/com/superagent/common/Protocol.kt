@@ -15,6 +15,8 @@ data class RpcError(
     val code: String,
     val message: String,
     val reason: String? = null,
+    /** AD-10：敏感动作被拒时的一次性 nonce——hitl.confirm 必须携带此值 */
+    val nonce: String? = null,
 )
 
 @Serializable
@@ -28,8 +30,8 @@ data class RpcResponse(
         fun success(id: Int, result: JsonElement? = null): RpcResponse =
             RpcResponse(id, true, result)
 
-        fun failure(id: Int, code: String, message: String, reason: String? = null): RpcResponse =
-            RpcResponse(id, false, null, RpcError(code, message, reason))
+        fun failure(id: Int, code: String, message: String, reason: String? = null, nonce: String? = null): RpcResponse =
+            RpcResponse(id, false, null, RpcError(code, message, reason, nonce))
     }
 }
 

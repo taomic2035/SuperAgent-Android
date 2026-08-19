@@ -355,12 +355,26 @@ class BodyCore(
         }
 
         server.rpc("hitl.confirm", HITL_RPC_TIMEOUT_MS) { req ->
-            val prompt = params(req).string("prompt") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 prompt")
-            // action=被拦截动作的确切文字（如「发送」）。用户同意后按标签放行一次，
-            // 否则敏感会话内 selectOption 重试会被 needsExtraConfirm 永久拦截（死锁）。
-            val action = params(req).string("action")
-            val approved = hitl.confirm(prompt)
-            if (approved && action != null) sensitiveSession.approve(action)
+            val p = params(req)
+            val prompt = p.string("prompt") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 prompt")
+            val nonce = p.string("nonce")
+            // AD-10：nonce 优先——一次性消费（绑原始动作+前台包名+时间窗），不可伪造
+            val approved: Boolean
+            if (nonce != null) {
+                val label = sensitiveSession.consumeNonce(nonce)
+                if (label == null) {
+                    return@rpc ok(req, com.superagent.common.HitlConfirmResult(false))
+                }
+                // 服务端规范化文案（不信任 brain 自拟 prompt 承载授权语义）
+                val canonicalPrompt = "确认在 ${sensitiveSession.currentApp} 执行「$label」？"
+                approved = hitl.confirm(canonicalPrompt)
+                if (approved) sensitiveSession.approve(label)
+            } else {
+                // 无 nonce 回退 action 路径（过渡兼容，后续收窄）
+                val action = p.string("action")
+                approved = hitl.confirm(prompt)
+                if (approved && action != null) sensitiveSession.approve(action)
+            }
             ok(req, com.superagent.common.HitlConfirmResult(approved))
         }
 
@@ -401,7 +415,11 @@ class BodyCore(
             is com.superagent.body.core.security.ActionGate.Violation.Commit ->
                 RpcResponse.failure(req.id, "COMMIT_BOUNDARY", "「${v.label}」是提交边界动作，不可绕过（转 hitl）", v.reason)
             is com.superagent.body.core.security.ActionGate.Violation.SensitiveSession ->
-                RpcResponse.failure(req.id, "COMMIT_BOUNDARY", "敏感会话内动作「${v.label}」需人工确认（hitl.confirm 带 action 放行）", v.reason)
+                RpcResponse.failure(
+                    req.id, "COMMIT_BOUNDARY",
+                    "敏感会话内动作「${v.label}」需人工确认。hitl.confirm 时必须把 nonce 传入 nonce 参数。",
+                    v.reason, v.nonce,
+                )
         }
 
     private class Params(private val obj: JsonObject) {

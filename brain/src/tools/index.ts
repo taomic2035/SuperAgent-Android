@@ -140,8 +140,19 @@ export function buildTools(
         label: Type.String({ description: "目标可见文字" }),
         near: Type.Optional(Type.Object({ x: Type.Number(), y: Type.Number() })),
       }),
-      execute: async (toolCallId, params: any) => {
-        const result = await body.rpc<ActionResult>("control.selectOption", params, idem("control.selectOption", toolCallId))
+      execute: async (_id, params: any) => {
+        let result: ActionResult
+        try {
+          result = await body.rpc<ActionResult>("control.selectOption", params, idem("control.selectOption", _id))
+        } catch (err) {
+          if (err instanceof BodyRpcError && err.code === "COMMIT_BOUNDARY" && err.nonce) {
+            throw new Error(
+              `敏感会话拦截（nonce=${err.nonce}）。调用 hitl.confirm 时把 nonce="${err.nonce}" 传入 nonce 参数；` +
+              "用户同意后重试本动作即可放行。通知文案由服务端生成，你不需要自己写确认文案。",
+            )
+          }
+          throw err
+        }
         if (!result.located) throw new Error(result.note ?? `未找到可见文字「${params.label}」`)
         return { content: [{ type: "text", text: `已点选「${params.label}」` }], details: result }
       },
@@ -355,10 +366,13 @@ export function buildTools(
       label: "请求确认",
       description:
         "敏感操作前请求用户确认。approved=false 表示用户拒绝。" +
-        "当某动作被 COMMIT_BOUNDARY/sensitive_session 拒绝时：确认时必须把该动作的确切文字传入 action，用户同意后即可重试该动作。",
+        "当动作被 COMMIT_BOUNDARY(sensitive_session) 拒绝且错误中携带 nonce 时：**必须把 nonce 传入本工具的 nonce 参数**（服务端校验一次性消费，不可伪造）。" +
+        "nonce 路径下通知文案由服务端生成（规范化），用户看到的就是将要执行的真实动作。" +
+        "旧路径（无 nonce 时）把被拦截动作文字传入 action 参数。",
       parameters: Type.Object({
         prompt: Type.String({ description: "向用户展示的确认文案" }),
-        action: Type.Optional(Type.String({ description: "被拦截动作的确切文字（用于用户同意后放行重试）" })),
+        action: Type.Optional(Type.String({ description: "被拦截动作的确切文字（旧路径，nonce 缺失时用）" })),
+        nonce: Type.Optional(Type.String({ description: "敏感动作被拒时返回的一次性 nonce（AD-10，优先于 action）" })),
       }),
       execute: async (_id, params: any) => {
         const result = await body.rpc<HitlConfirmResult>("hitl.confirm", params, undefined, HITL_RPC_TIMEOUT_MS)

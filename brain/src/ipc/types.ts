@@ -7,7 +7,7 @@ export interface RpcRequest {
 
 export type RpcResponse =
   | { id: number; ok: true; result: unknown }
-  | { id: number; ok: false; error: { code: string; message: string; reason?: string } }
+  | { id: number; ok: false; error: { code: string; message: string; reason?: string; nonce?: string } }
 
 export interface BodyEvent {
   seq: number

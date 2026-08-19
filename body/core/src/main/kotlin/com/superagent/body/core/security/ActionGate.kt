@@ -13,7 +13,8 @@ object ActionGate {
 
     sealed class Violation(val label: String, val reason: String) {
         class Commit(text: String) : Violation(text, "commit")
-        class SensitiveSession(text: String) : Violation(text, "sensitive_session")
+        /** AD-10：携带一次性 nonce——hitl.confirm 必须回传此值才能放行 */
+        class SensitiveSession(text: String, val nonce: String) : Violation(text, "sensitive_session")
     }
 
     /**
@@ -29,7 +30,7 @@ object ActionGate {
         hits.firstOrNull { CommitBoundaryGuard.isCommitBoundary(it.label) }
             ?.let { return Violation.Commit(it.label) }
         hits.firstOrNull { sensitive.needsExtraConfirm(it.label) }
-            ?.let { return Violation.SensitiveSession(it.label) }
+            ?.let { return Violation.SensitiveSession(it.label, sensitive.issueNonce(it.label)) }
         return null
     }
 }
