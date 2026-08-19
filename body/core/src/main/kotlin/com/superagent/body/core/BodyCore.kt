@@ -84,6 +84,10 @@ class BodyCore(
             if (mode == "vision" || mode == "auto") {
                 // P0：auto 仍走 a11y（视觉待 brain 侧 VLM 通路就绪后启用），仅显式 vision 走截图
                 if (mode == "vision") {
+                    // 审计 P1-06：敏感会话内禁止视觉导出（截图出设备 = 隐私边界）
+                    if (sensitiveSession.inSensitiveSession) {
+                        return@rpc RpcResponse.failure(req.id, "VISION_BLOCKED", "敏感会话内禁止视觉导出（已回退 a11y 可用）", "privacy")
+                    }
                     val ref = runCatching { screenshots.capture(blobsDir) }.getOrNull()
                     if (ref != null) {
                         val a11yScreen = perceiver.perceive("a11y", sensitiveSession.inSensitiveSession)

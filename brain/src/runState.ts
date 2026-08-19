@@ -9,7 +9,13 @@ import { join } from "node:path"
  * trace 单调序号、脱敏后落盘。pi AgentHarness/Session 不用（见 AD-05）。
  */
 
-export type RunOutcome = "success" | "failed" | "crashed" | "needs_human"
+export type RunOutcome = "success" | "failed" | "crashed" | "needs_human" | "closed"
+
+/**
+ * closed（审计 P1-01）：模型口头收笔/对话型回合的终态——未经 task.finish 证据核验，
+ * 不得记 success（审计：会污染成功率统计并失去续跑判断依据）；对话型也不该算 failed
+ * （会触发可续跑提示）。closed = 明确结束、不可续跑、审计可辨。
+ */
 
 export interface RunState {
   goal: string

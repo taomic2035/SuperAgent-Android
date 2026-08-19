@@ -35,6 +35,8 @@ class BodyServer(
     private val handlerTimeouts = ConcurrentHashMap<String, Long>()
     private val idempotentResults = ConcurrentHashMap<String, RpcResponse>()
     private val idempotentOrder = java.util.concurrent.ConcurrentLinkedQueue<String>()
+    /** 审计 P1-03：同 key 并发执行预留（共享首个执行结果，防重复手势/输入/启动） */
+    private val idempotentInFlight = ConcurrentHashMap<String, java.util.concurrent.CompletableFuture<RpcResponse>>()
 
     fun on(method: String, handler: Handler) {
         handlers[method] = handler
@@ -112,6 +114,7 @@ class BodyServer(
             return jsonResponse(RpcResponse.failure(0, "UNAUTHORIZED", "token 无效"), 401)
         }
         val body = readBody(session)
+            ?: return jsonResponse(RpcResponse.failure(0, "BAD_REQUEST", "请求体缺失或超过上限 ${MAX_BODY_BYTES / 1024 / 1024}MB"), 413)
         val request = try {
             json.decodeFromString<RpcRequest>(body)
         } catch (e: Exception) {
@@ -123,14 +126,34 @@ class BodyServer(
         }
         val handler = handlers[request.method]
             ?: return jsonResponse(RpcResponse.failure(request.id, "UNKNOWN_METHOD", "未知方法: ${request.method}"))
-        val response = runBlocking(handler, request)
-        if (key != null && response.ok && idempotentResults.putIfAbsent(key, response) == null) {
-            idempotentOrder.add(key)
-            while (idempotentOrder.size > MAX_IDEMPOTENT_ENTRIES) {
-                val oldest = idempotentOrder.poll() ?: break
-                idempotentResults.remove(oldest)
+        // 审计 P1-03：同 key 并发/瞬时重试共享同一次执行（in-flight 预留），不再各自进 handler 重复执行手势
+        if (key != null) {
+            val newFuture = java.util.concurrent.CompletableFuture<RpcResponse>()
+            val existing = idempotentInFlight.putIfAbsent(key, newFuture)
+            if (existing != null) {
+                val shared = runCatching { existing.get(35, java.util.concurrent.TimeUnit.SECONDS) }.getOrNull()
+                    ?: RpcResponse.failure(request.id, "TIMEOUT", "同 key 请求仍在执行")
+                return jsonResponse(shared)
             }
+            var response: RpcResponse? = null
+            try {
+                response = runBlocking(handler, request)
+            } finally {
+                idempotentInFlight.remove(key)
+                newFuture.complete(
+                    response ?: RpcResponse.failure(request.id, "BODY_ERROR", "handler 未产出结果"),
+                )
+            }
+            if (key != null && response.ok && idempotentResults.putIfAbsent(key, response) == null) {
+                idempotentOrder.add(key)
+                while (idempotentOrder.size > MAX_IDEMPOTENT_ENTRIES) {
+                    val oldest = idempotentOrder.poll() ?: break
+                    idempotentResults.remove(oldest)
+                }
+            }
+            return jsonResponse(response)
         }
+        val response = runBlocking(handler, request)
         return jsonResponse(response)
     }
 
@@ -151,8 +174,10 @@ class BodyServer(
         return result ?: RpcResponse.failure(request.id, "TIMEOUT", "handler 超时")
     }
 
-    private fun readBody(session: IHTTPSession): String {
-        val length = session.headers.get("content-length")?.toIntOrNull() ?: 0
+    /** 审计 P1-04：请求体上限（拒绝超大/负数/缺失 Content-Length，防持 token 客户端内存耗尽）。 */
+    private fun readBody(session: IHTTPSession): String? {
+        val length = session.headers.get("content-length")?.toIntOrNull() ?: -1
+        if (length < 0 || length > MAX_BODY_BYTES) return null
         val buffer = ByteArray(length)
         var offset = 0
         while (offset < length) {
@@ -188,6 +213,9 @@ class BodyServer(
     companion object {
         const val DEFAULT_HANDLER_TIMEOUT_MS = 30_000L
         private const val MAX_IDEMPOTENT_ENTRIES = 512
+
+        /** 审计 P1-04：单请求体上限 10MB（skill.learn 大轨迹也远够） */
+        private const val MAX_BODY_BYTES = 10 * 1024 * 1024
     }
 
     @Throws(IOException::class)

@@ -9,7 +9,7 @@ import { buildLlmRelevanceCheck } from "./guards/relevance.ts"
 import { buildLlmVisionMarks } from "./guards/vision.ts"
 import { loadPersonas } from "./personas/personas.ts"
 import { buildSystemPrompt, buildChatOnlyPrompt } from "./personas/promptBuilder.ts"
-import { beginRun, hasResumableRun, resumeRun, finishRun, peekRun, buildResumeContext } from "./runState.ts"
+import { beginRun, hasResumableRun, resumeRun, finishRun, peekRun, buildResumeContext, getRun } from "./runState.ts"
 import { env } from "./env.ts"
 import type { AsrResult, BodyEvent, SkillListResult } from "./ipc/types.ts"
 
@@ -175,7 +175,7 @@ async function runRepl(prompt: (input: string) => Promise<void>): Promise<void> 
           responseBuffer = ""
           await prompt(buildResumeContext(saved))
           process.stdout.write("\n\n")
-          finishRun("success")
+          finishRun(getRun().finishVerified ? "success" : "closed")
         } catch (err) {
           process.stdout.write("\n")
           console.log(`[brain] 任务失败：${err instanceof Error ? err.message : String(err)}`)
@@ -191,7 +191,7 @@ async function runRepl(prompt: (input: string) => Promise<void>): Promise<void> 
       responseBuffer = ""
       await prompt(input)
       process.stdout.write("\n\n")
-      finishRun("success")
+      finishRun(getRun().finishVerified ? "success" : "closed")
     } catch (err) {
       process.stdout.write("\n")
       console.log(`[brain] 任务失败：${err instanceof Error ? err.message : String(err)}`)
@@ -235,7 +235,7 @@ async function voiceTurn(body: BodyClient, prompt: (input: string) => Promise<vo
     if (responseBuffer.trim()) {
       await body.rpc("speech.say", { text: responseBuffer.trim() })
     }
-    finishRun("success")
+    finishRun(getRun().finishVerified ? "success" : "closed")
     console.log("\n---")
   } catch (err) {
     console.log(`[brain] 语音轮次失败：${err instanceof Error ? err.message : String(err)}`)
