@@ -62,6 +62,34 @@ export function finishRun(outcome: RunOutcome, failureReason?: string): void {
   current.failureReason = failureReason
   if (outcome === "success") current.finishRejectCount = 0
   persist()
+  archiveRun()
+}
+
+/**
+ * 终态 run 归档（Kestrel TraceRetention 语义，保留最近 30 条）：审计/复盘"模型在哪些任务上
+ * 谎报/失败"必需。主文件 runstate.json 仍只存最近一次（断点续跑用），历史独立文件。
+ */
+function archiveRun(): void {
+  try {
+    const snapshot = loadPersisted()
+    if (!snapshot) return
+    const historyFile = join(stateDir(), "runstate-history.json")
+    const history = readHistory(historyFile)
+    history.push(snapshot)
+    while (history.length > 30) history.shift()
+    writeFileSync(historyFile, JSON.stringify(history), "utf8")
+  } catch {
+    // 归档失败不阻断
+  }
+}
+
+function readHistory(file: string): RunState[] {
+  try {
+    if (!existsSync(file)) return []
+    return JSON.parse(readFileSync(file, "utf8")) as RunState[]
+  } catch {
+    return []
+  }
 }
 
 /** task.finish 证据驳回计数（TC-08：连续 ≥3 次应转人工）。 */
@@ -119,8 +147,8 @@ export function buildResumeContext(saved: RunState): string {
   ].join("\n")
 }
 
-/** 落盘保留的无 PII 参数键（坐标/可见文字标签/包名/技能名）；typeText.text 等载荷值仍丢弃。 */
-const SAFE_ARG_KEYS = new Set(["x", "y", "fromX", "fromY", "toX", "toY", "durationMs", "label", "pkg", "name"])
+/** 落盘保留的无 PII 参数键（坐标/可见文字标签/包名/技能名/驳回复盘字段）；typeText.text 等载荷值仍丢弃。 */
+const SAFE_ARG_KEYS = new Set(["x", "y", "fromX", "fromY", "toX", "toY", "durationMs", "label", "pkg", "name", "evidence", "reason"])
 
 function persist(): void {
   if (!current) return

@@ -1,7 +1,13 @@
 import type { AfterToolCallContext, BeforeToolCallContext } from "@earendil-works/pi-agent-core"
 import { addTrace, getRun } from "../runState.ts"
 import type { ScreenResult } from "../ipc/types.ts"
+import { redactText } from "./redact.ts"
 import { ReActGuard } from "./reactGuard.ts"
+
+/** 驳回证据入 trace 前的脱敏（身份证/卡号/密码类值不打入历史）。 */
+function redactForTrace(s: string): string {
+  return redactText(s).slice(0, 80)
+}
 
 /**
  * brain 守卫层（AD-01 + AD-05）：
@@ -49,19 +55,19 @@ export function resetGuard(): void {
 
 /**
  * task.finish 证据驳回留痕（Kestrel 语义，AD-06 采纳）：
- * 驳回计入 trace（resultKind=finish_rejected）+ 计入止损全局步数，
- * 且前后签名相同推高 NoProgress——反复谎报完成本身就是一种"无进展"。
+ * 驳回计入 trace（resultKind=finish_rejected，含驳回原因与证据原文——复盘"模型为何谎报"必需）
+ * + 计入止损全局步数，且前后签名相同推高 NoProgress——反复谎报完成本身就是一种"无进展"。
  */
-export function markFinishRejected(): void {
+export function markFinishRejected(evidence: string, reason: string): void {
   addTrace({
     tool: "task.finish",
-    args: {},
+    args: { evidence: redactForTrace(evidence), reason: reason.slice(0, 80) },
     located: false,
     signature: lastScreenSig,
     timestamp: Date.now(),
     resultKind: "finish_rejected",
   })
-  reactGuard.record("task.finish", {}, lastScreenSig, lastScreenSig)
+  reactGuard.record("task.finish", { evidence, reason }, lastScreenSig, lastScreenSig)
 }
 
 export async function beforeToolCall(

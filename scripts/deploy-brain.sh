@@ -6,6 +6,10 @@ set -euo pipefail
 #   bash scripts/deploy-brain.sh            # 默认 --build：esbuild 打包 brain → dist/brain.mjs，输出 sha256
 #   bash scripts/deploy-brain.sh --build    # 同上
 #   bash scripts/deploy-brain.sh --device   # 构建 + adb push + run-as cp 两步送进 Termux ~/brain-lite/
+# 坑（2026-08-19 真机实测，#15）：
+#   - Git Bash 下设备路径必须防 MSYS 转换（脚本已 export MSYS2_ARG_CONV_EXCL）
+#   - 后台跑 brain 时环境变量务必先 export 再直调 tsx：`VAR=x cmd | pipe` 只给管道左命令，
+#     token 会静默落默认值导致 401 循环；npm run 的 cmd 包装层还会缓冲 stdout，观察输出直接用 tsx
 # 前置：
 #   --build  : node >= 20（在 brain/ 下执行 node build.mjs）
 #   --device : 上述 + adb + 已连接设备（Termux 已安装，~/brain-lite/ 内已有 node_modules）

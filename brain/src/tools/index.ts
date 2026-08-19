@@ -403,7 +403,7 @@ export function buildTools(
         const verdict = verifyEvidence(screen, run.baselineScreen, params.evidence)
         if (!verdict.ok) {
           const rejects = noteFinishRejected()
-          markFinishRejected()
+          markFinishRejected(params.evidence, verdict.reason)
           const escalation =
             rejects >= 3
               ? `（已连续 ${rejects} 次证据驳回，疑似无法自证完成——立即 hitl.handoff 转人工，不要再尝试 task.finish）`
@@ -415,7 +415,7 @@ export function buildTools(
           const rel = await relevance(run.goal, params.evidence, screen.pageTexts ?? []).catch(() => null)
           if (rel && !rel.ok) {
             const rejects = noteFinishRejected()
-            markFinishRejected()
+            markFinishRejected(params.evidence, `证据与目标不相关：${rel.reason}`)
             const escalation =
               rejects >= 3
                 ? `（已连续 ${rejects} 次证据驳回——立即 hitl.handoff 转人工）`

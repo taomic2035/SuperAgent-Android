@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { mkdtemp } from "node:fs/promises"
+import { readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { startMockBody } from "./mock-body.ts"
@@ -13,6 +14,7 @@ import { afterToolCall, beforeToolCall, resetGuard } from "../src/guards/index.t
 import type { BeforeToolCallContext } from "@earendil-works/pi-agent-core"
 import type { AfterToolCallContext } from "@earendil-works/pi-agent-core"
 import { beginRun, addTrace, finishRun, hasResumableRun, resumeRun, resetRun, buildResumeContext, peekRun, getRun } from "../src/runState.ts"
+import type { RunState } from "../src/runState.ts"
 import { buildTools } from "../src/tools/index.ts"
 import { loadPersonas } from "../src/personas/personas.ts"
 import type { ScreenResult } from "../src/ipc/types.ts"
@@ -94,6 +96,11 @@ async function main(): Promise<void> {
       assert.ok(resumed && resumed.trace.length === 3)
       finishRun("success")
       assert.equal(hasResumableRun(), false) // 成功终态不可续
+      // #8 终态历史归档（30 run 上限）：crashed 与 success 两条已入档
+      const history = JSON.parse(readFileSync(join(tmp, "runstate-history.json"), "utf8")) as RunState[]
+      assert.equal(history.length, 2)
+      assert.ok(history[0].goal.includes("奶茶") && history[0].outcome === "crashed")
+      assert.equal(history[1].outcome, "success")
       resetRun()
     } finally {
       delete process.env.SUPER_AGENT_STATE_DIR
@@ -232,8 +239,11 @@ async function main(): Promise<void> {
           finish.execute("f3", { summary: "完成", evidence: "已送达" }),
           (e: unknown) => e instanceof Error && e.message.includes("连续 3 次证据驳回") && e.message.includes("hitl.handoff"),
         )
-        // Kestrel 语义：每次驳回都留痕 resultKind=finish_rejected（供断点续跑/审计）
-        assert.equal(getRun().trace.filter((s) => s.resultKind === "finish_rejected").length, 3)
+        // Kestrel 语义：每次驳回都留痕 resultKind=finish_rejected（含证据原文，供谎报复盘）
+        const rejected = getRun().trace.filter((s) => s.resultKind === "finish_rejected")
+        assert.equal(rejected.length, 3)
+        assert.equal(rejected[0].args?.evidence, "已送达")
+        assert.ok(String(rejected[0].args?.reason).length > 0)
         // 新 run（计数随 beginRun 清零）：第 5 次 perceive 落在"搜索/立即购买"屏 → 存在性通过
         beginRun("再买一单")
         const done = (await finish.execute("f4", { summary: "完成", evidence: "立即购买" })) as {
