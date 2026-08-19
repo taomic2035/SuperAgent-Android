@@ -11,6 +11,7 @@ import { loadPersonas } from "./personas/personas.ts"
 import { buildSystemPrompt, buildChatOnlyPrompt } from "./personas/promptBuilder.ts"
 import { beginRun, hasResumableRun, resumeRun, finishRun, peekRun, buildResumeContext, getRun } from "./runState.ts"
 import { env } from "./env.ts"
+import { initBrainEvents, reportPromptStart, reportFinish, isStopRequested, clearStop, requestStop } from "./ipc/brainEventReporter.ts"
 import type { AsrResult, BodyEvent, SkillListResult } from "./ipc/types.ts"
 
 const BODY_URL = env("BODY_URL", "http://127.0.0.1:8765")
@@ -22,6 +23,7 @@ let responseBuffer = ""
 
 async function main(): Promise<void> {
   const body = new BodyClient(BODY_URL, BODY_TOKEN)
+  initBrainEvents(body)
   console.log(`[brain] 等待躯体服务 ${BODY_URL} ...`)
   await body.waitForBody()
   console.log("[brain] 躯体已连接")
@@ -124,9 +126,12 @@ async function main(): Promise<void> {
 
   /** 带 failover 的 prompt：连续失败 ≥3 次切换模型并用新模型重试当次输入一次。 */
   async function promptAgent(input: string): Promise<void> {
+    clearStop()
+    void reportPromptStart(input)
     try {
       await agent.prompt(input)
       llmFailures = 0
+      reportFinish(getRun().finishVerified ? "success" : "failed", getRun().finishVerified ? "任务完成" : "未完成即收笔")
     } catch (err) {
       llmFailures++
       const msg = err instanceof Error ? err.message : String(err)
@@ -136,6 +141,7 @@ async function main(): Promise<void> {
           return
         }
       }
+      reportFinish(isStopRequested() ? "aborted" : "failed", isStopRequested() ? "用户已停止" : msg.slice(0, 30))
       throw err
     }
   }
@@ -214,8 +220,31 @@ async function runVoiceLoop(body: BodyClient, prompt: (input: string) => Promise
     }
     for (const ev of events) {
       lastEventSeq = Math.max(lastEventSeq, ev.seq)
-      if (ev.type === "voice" && (ev.payload as Record<string, unknown>)?.kind === "trigger") {
+      if (ev.type !== "voice") continue
+      const kind = (ev.payload as Record<string, unknown>)?.kind
+      if (kind === "trigger") {
         await voiceTurn(body, prompt)
+      } else if (kind === "text_input") {
+        // UI-0：悬浮层文字指令（免 ASR，docs/12 §5.2——同队列不并发，进行中忽略新指令）
+        const text = String((ev.payload as Record<string, unknown>)?.text ?? "").trim()
+        if (text) {
+          console.log(`你(输入)> ${text}`)
+          beginRun(text)
+          resetSensitiveSession()
+          console.log("助手> ")
+          responseBuffer = ""
+          try {
+            await prompt(text)
+            process.stdout.write("\n\n")
+            finishRun(getRun().finishVerified ? "success" : "closed")
+          } catch (err) {
+            console.log(`[brain] 任务失败：${err instanceof Error ? err.message : String(err)}`)
+            finishRun("crashed", err instanceof Error ? err.message : String(err))
+          }
+        }
+      } else if (kind === "stop_request") {
+        requestStop()
+        console.log("[brain] 收到用户停止请求")
       }
     }
     await sleep(500)

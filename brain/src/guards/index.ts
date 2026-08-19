@@ -3,6 +3,7 @@ import { addTrace, getRun } from "../runState.ts"
 import type { ScreenResult } from "../ipc/types.ts"
 import { redactText } from "./redact.ts"
 import { ReActGuard } from "./reactGuard.ts"
+import { isStopRequested, reportAct } from "../ipc/brainEventReporter.ts"
 
 /** 驳回证据入 trace 前的脱敏（身份证/卡号/密码类值不打入历史）。 */
 function redactForTrace(s: string): string {
@@ -73,6 +74,10 @@ export function markFinishRejected(evidence: string, reason: string): void {
 export async function beforeToolCall(
   context: BeforeToolCallContext,
 ): Promise<{ block: true; reason: string; terminate: true } | undefined> {
+  // UI-0：用户停止请求（悬浮层"停止"→voice 事件 stop_request）——立即阻断一切动作工具
+  if (isStopRequested()) {
+    return { block: true, reason: "用户已请求停止。不要再执行任何动作，直接收尾。", terminate: true }
+  }
   if (ABORT_EXEMPT_TOOLS.has(context.toolCall.name)) return undefined
   // AD-05：ReAct 止损。命中 → 强制终止本轮，交回模型处理（模型应据 reason 决定 finish(false) 或 NeedsHuman）。
   const abort = reactGuard.shouldAbort()
@@ -87,6 +92,9 @@ export async function beforeToolCall(
 }
 
 export async function afterToolCall(context: AfterToolCallContext): Promise<undefined> {
+  if (TRACE_TOOLS.has(context.toolCall.name)) {
+    void reportAct(context.toolCall.name, (context.args as Record<string, unknown>) ?? {})
+  }
   if (TRACE_TOOLS.has(context.toolCall.name)) {
     const details = (context.result?.details ?? {}) as { located?: boolean; signature?: string }
     const sigAfter = details.signature ?? lastScreenSig

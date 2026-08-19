@@ -45,6 +45,15 @@ class MainActivity : AppCompatActivity() {
             }
             startActivityForResult(svc.consentIntent(), REQ_CAPTURE)
         }
+        // UI-0（docs/12 §5.1 首启引导）：悬浮窗（SAW）授权——缺哪项直达哪项设置，返回即复检
+        findViewById<Button>(R.id.btn_overlay).setOnClickListener {
+            if (Build.VERSION.SDK_INT >= 23 && !Settings.canDrawOverlays(this)) {
+                startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:$packageName")))
+            } else {
+                FloatingUiService.start(this)
+                statusText.text = "悬浮球已启动（侧边控制球）"
+            }
+        }
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {

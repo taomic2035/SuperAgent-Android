@@ -58,6 +58,8 @@ class BodyCore(
 
     fun start(): Boolean {
         if (!started.compareAndSet(false, true)) return false
+        // UI-0：body 是 UI 唯一 owner——悬浮层经 UiBus 订阅同源事件（docs/05 §6.1）
+        com.superagent.body.core.ui.UiBus.events = events
         registerHandlers()
         runCatching { server.start() }
             .onFailure { e ->
@@ -88,18 +90,28 @@ class BodyCore(
                     if (sensitiveSession.inSensitiveSession) {
                         return@rpc RpcResponse.failure(req.id, "VISION_BLOCKED", "敏感会话内禁止视觉导出（已回退 a11y 可用）", "privacy")
                     }
-                    val ref = runCatching { screenshots.capture(blobsDir) }.getOrNull()
-                    if (ref != null) {
-                        val a11yScreen = perceiver.perceive("a11y", sensitiveSession.inSensitiveSession)
-                        sensitiveSession.onForeground(a11yScreen.appPackage)
-                        return@rpc ok(
-                            req,
-                            a11yScreen.copy(kind = "vision", marks = null, nodes = null, pageTexts = null, screenshotRef = ref),
-                        )
+                    // UX-10：截图前隐藏全部 overlay（OverlayGate），留一帧视图生效余量后采集
+                    com.superagent.body.core.ui.OverlayGate.hide()
+                    try {
+                        try {
+                            Thread.sleep(180)
+                        } catch (_: InterruptedException) {
+                        }
+                        val ref = runCatching { screenshots.capture(blobsDir) }.getOrNull()
+                        if (ref != null) {
+                            val a11yScreen = perceiver.perceive("a11y", sensitiveSession.inSensitiveSession)
+                            sensitiveSession.onForeground(a11yScreen.appPackage)
+                            return@rpc ok(
+                                req,
+                                a11yScreen.copy(kind = "vision", marks = null, nodes = null, pageTexts = null, screenshotRef = ref),
+                            )
+                        }
+                        val fallback = perceiver.perceive("a11y", sensitiveSession.inSensitiveSession)
+                        sensitiveSession.onForeground(fallback.appPackage)
+                        return@rpc ok(req, fallback)
+                    } finally {
+                        com.superagent.body.core.ui.OverlayGate.restore()
                     }
-                    val fallback = perceiver.perceive("a11y", sensitiveSession.inSensitiveSession)
-                    sensitiveSession.onForeground(fallback.appPackage)
-                    return@rpc ok(req, fallback)
                 }
             }
             val screen = perceiver.perceive(mode, sensitiveSession.inSensitiveSession)

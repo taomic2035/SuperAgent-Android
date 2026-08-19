@@ -30,9 +30,9 @@ class BodyService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        if (core?.start() != true && !running) {
-            // 已在运行：仅刷新通知
-        }
+        core?.start()
+        // UI-0：SAW 已授权则常驻悬浮层（控制球+状态条）；未授权由主界面引导
+        FloatingUiService.start(this)
         return START_STICKY
     }
 
