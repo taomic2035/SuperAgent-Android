@@ -75,40 +75,44 @@ class ScreenshotService(private val context: Context) {
                 Thread.sleep(100)
             }
             image ?: return null
-            val plane = image.planes[0]
-            val rowStride = plane.rowStride.toLong()
-            val pixelStride = plane.pixelStride.toLong()
-            val buffer = plane.buffer.duplicate()
-            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-            val px = IntArray(width * height)
-            var dst = 0
-            for (row in 0 until height) {
-                var srcRow = rowStride * row
-                if (buffer.remaining() < rowStride * height - srcRow - pixelStride * width) break
-                for (col in 0 until width) {
-                    val pos = (srcRow + pixelStride * col).toInt()
-                    if (pos + 3 >= buffer.capacity()) break
-                    val r8 = buffer.get(pos).toInt() and 0xFF
-                    val g8 = buffer.get(pos + 1).toInt() and 0xFF
-                    val b8 = buffer.get(pos + 2).toInt() and 0xFF
-                    val a8 = buffer.get(pos + 3).toInt() and 0xFF
-                    px[dst++] = (a8 shl 24) or (r8 shl 16) or (g8 shl 8) or b8
+            // P2-01（审计）：Image 句柄异常路径也必须释放——漏一次耗尽 ImageReader 两帧缓冲后截图永久失效
+            try {
+                val plane = image.planes[0]
+                val rowStride = plane.rowStride.toLong()
+                val pixelStride = plane.pixelStride.toLong()
+                val buffer = plane.buffer.duplicate()
+                val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                val px = IntArray(width * height)
+                var dst = 0
+                for (row in 0 until height) {
+                    var srcRow = rowStride * row
+                    if (buffer.remaining() < rowStride * height - srcRow - pixelStride * width) break
+                    for (col in 0 until width) {
+                        val pos = (srcRow + pixelStride * col).toInt()
+                        if (pos + 3 >= buffer.capacity()) break
+                        val r8 = buffer.get(pos).toInt() and 0xFF
+                        val g8 = buffer.get(pos + 1).toInt() and 0xFF
+                        val b8 = buffer.get(pos + 2).toInt() and 0xFF
+                        val a8 = buffer.get(pos + 3).toInt() and 0xFF
+                        px[dst++] = (a8 shl 24) or (r8 shl 16) or (g8 shl 8) or b8
+                    }
                 }
+                if (dst < px.size) {
+                    bitmap.eraseColor(0xFF000000.toInt())
+                    bitmap.setPixels(px, 0, width, 0, 0, width, dst / width.coerceAtLeast(1))
+                } else {
+                    bitmap.setPixels(px, 0, width, 0, 0, width, height)
+                }
+                outDir.mkdirs()
+                // 滚动保留最近 8 张，防 blobs 目录膨胀
+                outDir.listFiles()?.sortedBy { it.name }?.dropLast(7)?.forEach { it.delete() }
+                val name = "shot-${System.currentTimeMillis()}.jpg"
+                File(outDir, name).outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 80, it) }
+                bitmap.recycle()
+                return name
+            } finally {
+                image.close()
             }
-            image.close()
-            if (dst < px.size) {
-                bitmap.eraseColor(0xFF000000.toInt())
-                bitmap.setPixels(px, 0, width, 0, 0, width, dst / width.coerceAtLeast(1))
-            } else {
-                bitmap.setPixels(px, 0, width, 0, 0, width, height)
-            }
-            outDir.mkdirs()
-            // 滚动保留最近 8 张，防 blobs 目录膨胀
-            outDir.listFiles()?.sortedBy { it.name }?.dropLast(7)?.forEach { it.delete() }
-            val name = "shot-${System.currentTimeMillis()}.jpg"
-            File(outDir, name).outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 80, it) }
-            bitmap.recycle()
-            return name
         } catch (e: Exception) {
             Log.e(TAG, "capture failed", e)
             return null

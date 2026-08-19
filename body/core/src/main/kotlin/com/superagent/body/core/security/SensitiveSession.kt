@@ -19,18 +19,33 @@ class SensitiveSessionTracker {
     /** 用户已确认放行的动作标签 → 过期时间戳。 */
     private val approvedLabels = mutableMapOf<String, Long>()
 
-    fun onLaunch(pkg: String) {
+    /**
+     * 审计 P0-01 修复：以**真实前台包名**同步敏感态（perceive 时调用）——
+     * 用户从桌面手动打开银行/聊天应用不再漏判（此前只有 control.launch/home 更新状态）。
+     * 会话切换（进/出敏感应用）时清空未消费的批准。
+     */
+    fun onForeground(pkg: String?) {
+        if (pkg == null || pkg == currentApp) return
+        val sensitive = SensitiveAppRegistry.isSensitiveApp(pkg)
+        if (sensitive != inSensitiveSession) {
+            inSensitiveSession = sensitive
+            synchronized(approvedLabels) { approvedLabels.clear() }
+        }
         currentApp = pkg
-        inSensitiveSession = SensitiveAppRegistry.isSensitiveApp(pkg)
-        synchronized(approvedLabels) { approvedLabels.clear() }
+    }
+
+    fun onLaunch(pkg: String) {
+        onForeground(pkg)
     }
 
     fun onHome() {
-        inSensitiveSession = false
-        synchronized(approvedLabels) { approvedLabels.clear() }
+        if (inSensitiveSession) {
+            inSensitiveSession = false
+            synchronized(approvedLabels) { approvedLabels.clear() }
+        }
     }
 
-    /** hitl.confirm 用户同意后按确切标签放行一次（短时效，防长期豁免）。 */
+    /** hitl.confirm 用户同意后按确切标签放行（短时效，**单次消费**——审计 P0-05：不消费可重复放行）。 */
     fun approve(label: String) {
         val normalized = label.replace(Regex("\\s+"), "")
         if (normalized.isEmpty()) return
@@ -46,6 +61,7 @@ class SensitiveSessionTracker {
         return CommitBoundaryGuard.isSensitiveSessionAction(label)
     }
 
+    /** 单次消费：命中即移除（一次批准只放行一个动作）。 */
     private fun isApproved(label: String): Boolean {
         val normalized = label.replace(Regex("\\s+"), "")
         val now = System.currentTimeMillis()
@@ -55,6 +71,7 @@ class SensitiveSessionTracker {
                 approvedLabels.remove(normalized)
                 return false
             }
+            approvedLabels.remove(normalized)
             return true
         }
     }

@@ -196,6 +196,9 @@ class SkillStore(
             "control.tap" -> {
                 val x = step.args["x"]?.toIntOrNull() ?: return false
                 val y = step.args["y"]?.toIntOrNull() ?: return false
+                // 审计 P0-04（过渡修复）：回放 tap 走与 RPC 相同的统一闸门（提交边界+敏感会话，全节点检查）
+                val violation = com.superagent.body.core.security.ActionGate.violatingLabel(perceiver, sensitive, x, y)
+                if (violation != null) return false
                 controller.tap(x, y).located
             }
             "control.typeText" -> controller.typeText(step.args["text"] ?: "").located

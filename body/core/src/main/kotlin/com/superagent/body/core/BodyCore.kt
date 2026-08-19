@@ -87,25 +87,28 @@ class BodyCore(
                     val ref = runCatching { screenshots.capture(blobsDir) }.getOrNull()
                     if (ref != null) {
                         val a11yScreen = perceiver.perceive("a11y", sensitiveSession.inSensitiveSession)
+                        sensitiveSession.onForeground(a11yScreen.appPackage)
                         return@rpc ok(
                             req,
                             a11yScreen.copy(kind = "vision", marks = null, nodes = null, pageTexts = null, screenshotRef = ref),
                         )
                     }
                     val fallback = perceiver.perceive("a11y", sensitiveSession.inSensitiveSession)
+                    sensitiveSession.onForeground(fallback.appPackage)
                     return@rpc ok(req, fallback)
                 }
             }
-            ok(req, perceiver.perceive(mode, sensitiveSession.inSensitiveSession))
+            val screen = perceiver.perceive(mode, sensitiveSession.inSensitiveSession)
+            // 审计 P0-01：每次感知以真实前台包名同步敏感会话（用户手动打开敏感 App 不再漏判）
+            sensitiveSession.onForeground(screen.appPackage)
+            ok(req, screen)
         }
 
         server.rpc("control.tap") { req ->
             val p = params(req)
             val x = p.int("x") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 x")
             val y = p.int("y") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 y")
-            commitBoundaryAt(x, y)?.let { label ->
-                return@rpc RpcResponse.failure(req.id, "COMMIT_BOUNDARY", "落点「$label」是提交边界动作，坐标点击不可绕过（转 hitl）", "commit")
-            }
+            gate(x, y)?.let { return@rpc it.toFailure(req) }
             ok(req, withStableSig(controller.tap(x, y)))
         }
 
@@ -113,9 +116,7 @@ class BodyCore(
             val p = params(req)
             val x = p.int("x") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 x")
             val y = p.int("y") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 y")
-            commitBoundaryAt(x, y)?.let { label ->
-                return@rpc RpcResponse.failure(req.id, "COMMIT_BOUNDARY", "落点「$label」是提交边界动作，长按不可绕过（转 hitl）", "commit")
-            }
+            gate(x, y)?.let { return@rpc it.toFailure(req) }
             ok(req, withStableSig(controller.longPress(x, y, p.int("durationMs")?.toLong() ?: 600L)))
         }
 
@@ -145,7 +146,7 @@ class BodyCore(
             if (result.note == "COMMIT_BOUNDARY") {
                 return@rpc RpcResponse.failure(req.id, "COMMIT_BOUNDARY", "提交边界拦截（躯体侧兜底）", "commit")
             }
-            ok(req, result)
+            ok(req, withStableSig(result))
         }
 
         server.rpc("control.selectSpec") { req ->
@@ -159,7 +160,7 @@ class BodyCore(
             if (result.note == "COMMIT_BOUNDARY") {
                 return@rpc RpcResponse.failure(req.id, "COMMIT_BOUNDARY", "提交边界拦截（躯体侧兜底）", "commit")
             }
-            ok(req, result)
+            ok(req, withStableSig(result))
         }
 
         server.rpc("control.back") { req -> ok(req, controller.back()) }
@@ -345,18 +346,17 @@ class BodyCore(
     private fun params(req: com.superagent.common.RpcRequest): Params =
         Params(req.params?.jsonObject ?: buildJsonObject {})
 
-    /**
-     * 落点提交边界校验（P0 安全，2026-08-19 真机实测引入）：
-     * 模型会用 control.tap 坐标点击绕过 selectOption 的词表拦截。
-     * tap/longPress 前感知落点所在节点，label 命中提交边界词 → 拦截（与 selectOption 同语义）。
-     * 感知失败/落点无节点 → 放行（红线拦截不能因感知故障误伤正常操控）。
-     */
-    private fun commitBoundaryAt(x: Int, y: Int): String? {
-        val nodes = runCatching { perceiver.perceive("a11y").nodes }.getOrNull() ?: return null
-        val hit = nodes.firstOrNull { it.bounds.left <= x && x <= it.bounds.right && it.bounds.top <= y && y <= it.bounds.bottom }
-            ?: return null
-        return if (CommitBoundaryGuard.isCommitBoundary(hit.label)) hit.label else null
-    }
+    /** 坐标动作统一闸门（审计 P0-02/03：提交边界 + 敏感会话动作，全包含节点检查）。 */
+    private fun gate(x: Int, y: Int): com.superagent.body.core.security.ActionGate.Violation? =
+        com.superagent.body.core.security.ActionGate.violatingLabel(perceiver, sensitiveSession, x, y)
+
+    private fun com.superagent.body.core.security.ActionGate.Violation.toFailure(req: com.superagent.common.RpcRequest): RpcResponse =
+        when (this) {
+            is com.superagent.body.core.security.ActionGate.Violation.Commit ->
+                RpcResponse.failure(req.id, "COMMIT_BOUNDARY", "落点「$label」是提交边界动作，坐标点击不可绕过（转 hitl）", reason)
+            is com.superagent.body.core.security.ActionGate.Violation.SensitiveSession ->
+                RpcResponse.failure(req.id, "COMMIT_BOUNDARY", "敏感会话内动作「$label」需人工确认（hitl.confirm 带 action 放行）", reason)
+        }
 
     private class Params(private val obj: JsonObject) {
         val json: JsonObject get() = obj

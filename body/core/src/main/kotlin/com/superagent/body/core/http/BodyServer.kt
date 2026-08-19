@@ -64,28 +64,11 @@ class BodyServer(
         if (!authorized(session)) {
             return jsonResponse(RpcResponse.failure(0, "UNAUTHORIZED", "token 无效"), 401)
         }
-        return when (session.uri.removePrefix("/").trimEnd('/')) {
-            "health" -> jsonResponse(
-                RpcResponse.success(
-                    0,
-                    json.encodeToJsonElement(
-                        com.superagent.common.HealthStatus(
-                            ok = true,
-                            bootId = BodyContext.bootId,
-                            protocolVersion = PROTOCOL_VERSION,
-                            uptimeMs = BodyContext.uptimeMs(),
-                            services = healthServices(),
-                        ),
-                    ),
-                ),
-            )
-            "events" -> {
-                val since = session.parameters["since"]?.firstOrNull()?.toLongOrNull() ?: 0L
-                jsonResponse(RpcResponse.success(0, json.encodeToJsonElement(events.poll(since))))
-            }
-            "blob" -> {
-                // CT-04（P1 分步落地）：GET /blob/{id} 取截图（视觉感知 L1）。POST /blob 仍 BLOB_UNSUPPORTED
-                val id = session.uri.removePrefix("/").trimEnd('/').substringAfter('/', "").substringAfter('/', "")
+        val path = session.uri.removePrefix("/").trimEnd('/')
+        return when {
+            // P1-02 修复（审计）：真实路由是 /blob/{id}——精确匹配 "blob" 永远落 NOT_FOUND（mock 自带路由所以 smoke 没抓到）
+            path.startsWith("blob/") -> {
+                val id = path.removePrefix("blob/")
                 if (id.isBlank() || id.contains('/') || id.contains('\\') || id.contains("..")) {
                     jsonResponse(RpcResponse.failure(0, "BAD_REQUEST", "非法 blob id"), 400)
                 } else {
@@ -101,6 +84,24 @@ class BodyServer(
                         res
                     }
                 }
+            }
+            path == "health" -> jsonResponse(
+                RpcResponse.success(
+                    0,
+                    json.encodeToJsonElement(
+                        com.superagent.common.HealthStatus(
+                            ok = true,
+                            bootId = BodyContext.bootId,
+                            protocolVersion = PROTOCOL_VERSION,
+                            uptimeMs = BodyContext.uptimeMs(),
+                            services = healthServices(),
+                        ),
+                    ),
+                ),
+            )
+            path == "events" -> {
+                val since = session.parameters["since"]?.firstOrNull()?.toLongOrNull() ?: 0L
+                jsonResponse(RpcResponse.success(0, json.encodeToJsonElement(events.poll(since))))
             }
             else -> jsonResponse(RpcResponse.failure(0, "NOT_FOUND", session.uri), 404)
         }
