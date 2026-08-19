@@ -171,28 +171,32 @@ class BodyCore(
             val p = params(req)
             val label = p.string("label") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 label")
             val near = p.near()
-            if (sensitiveSession.needsExtraConfirm(label)) {
-                return@rpc RpcResponse.failure(req.id, "COMMIT_BOUNDARY", "敏感会话内确认动作需人工确认", "sensitive_session")
+            when (val r = actionExecutor.execute(
+                com.superagent.body.core.control.ActionExecutor.Action.Select(label, near?.x, near?.y),
+            )) {
+                is com.superagent.body.core.control.ActionExecutor.Result.GateBlocked ->
+                    return@rpc gateFailure(req, r.violation)
+                is com.superagent.body.core.control.ActionExecutor.Result.Failed ->
+                    return@rpc ok(req, ActionResult(false, null, r.reason))
+                is com.superagent.body.core.control.ActionExecutor.Result.Ok ->
+                    ok(req, r.actionResult)
             }
-            val result = selector.select(label, near, verifySelected = false)
-            if (result.note == "COMMIT_BOUNDARY") {
-                return@rpc RpcResponse.failure(req.id, "COMMIT_BOUNDARY", "提交边界拦截（躯体侧兜底）", "commit")
-            }
-            ok(req, withStableSig(result))
         }
 
         server.rpc("control.selectSpec") { req ->
             val p = params(req)
             val label = p.string("label") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 label")
             val near = p.near()
-            if (sensitiveSession.needsExtraConfirm(label)) {
-                return@rpc RpcResponse.failure(req.id, "COMMIT_BOUNDARY", "敏感会话内确认动作需人工确认", "sensitive_session")
+            when (val r = actionExecutor.execute(
+                com.superagent.body.core.control.ActionExecutor.Action.SelectSpec(label, near?.x, near?.y),
+            )) {
+                is com.superagent.body.core.control.ActionExecutor.Result.GateBlocked ->
+                    return@rpc gateFailure(req, r.violation)
+                is com.superagent.body.core.control.ActionExecutor.Result.Failed ->
+                    return@rpc ok(req, ActionResult(false, null, r.reason))
+                is com.superagent.body.core.control.ActionExecutor.Result.Ok ->
+                    ok(req, r.actionResult)
             }
-            val result = selector.select(label, near, verifySelected = true)
-            if (result.note == "COMMIT_BOUNDARY") {
-                return@rpc RpcResponse.failure(req.id, "COMMIT_BOUNDARY", "提交边界拦截（躯体侧兜底）", "commit")
-            }
-            ok(req, withStableSig(result))
         }
 
         server.rpc("control.back") { req -> ok(req, controller.back()) }
