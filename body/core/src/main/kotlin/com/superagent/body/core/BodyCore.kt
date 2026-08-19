@@ -338,9 +338,9 @@ class BodyCore(
         }
     }
 
-    /** 成功动作后附加稳定签名（#18：learn 存 expectedSignature，回放步进校验有据）。 */
+    /** 成功动作后附加**稳定后**签名（#18 learn 存 expectedSignature；#24 等页面过渡结束再采样）。 */
     private fun withStableSig(result: com.superagent.common.ActionResult): com.superagent.common.ActionResult =
-        if (result.located) result.copy(signature = perceiver.currentStableSignature() ?: result.signature) else result
+        if (result.located) result.copy(signature = perceiver.settledStableSignature() ?: result.signature) else result
 
     private fun params(req: com.superagent.common.RpcRequest): Params =
         Params(req.params?.jsonObject ?: buildJsonObject {})

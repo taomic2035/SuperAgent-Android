@@ -135,7 +135,8 @@ class SkillStore(
             } else {
                 val expected = skill.steps[index - 1].expectedSignature
                 if (expected != null) {
-                    val cur = perceiver.currentStableSignature()
+                    // #24：校验侧同样等签名稳定（动作返回后页面过渡中，立即采样与记录侧永不相等）
+                    val cur = perceiver.settledStableSignature()
                     if (cur == null || cur != expected) {
                         recordRun(skill, stale = true)
                         return SkillRunOutcome.Stale(completed, index, step)

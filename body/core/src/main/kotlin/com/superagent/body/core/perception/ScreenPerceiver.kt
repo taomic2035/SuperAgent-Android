@@ -108,6 +108,22 @@ class ScreenPerceiver(private val accessibilityService: () -> AccessibilityServi
         return if (marks.isEmpty()) null else stableSignature(marks)
     }
 
+    /**
+     * 等待签名稳定（#24：控制动作返回时页面仍在过渡动画，立刻采样导致学习记录与
+     * 回放校验两侧拿到不同过渡态 → 新技能回放恒 stale@1 假阳性）。
+     * 连续两次采样相同视为稳定；最多 4 组（约 1.6s，覆盖 EMUI 页面切换动画）。
+     */
+    fun settledStableSignature(): String? {
+        var prev = currentStableSignature()
+        repeat(4) {
+            Thread.sleep(400)
+            val cur = currentStableSignature()
+            if (cur != null && cur == prev) return cur
+            prev = cur
+        }
+        return prev
+    }
+
     companion object {
         fun signature(marks: List<Mark>): String {
             val sb = StringBuilder()
