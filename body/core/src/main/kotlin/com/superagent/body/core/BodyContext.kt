@@ -33,7 +33,9 @@ object TokenSecurity {
 data class BodySettings(
     val port: Int = 8765,
     val token: String = "",
-    val host: String = "127.0.0.1",
+    // bind 0.0.0.0 使 Termux 进程可访问（Android loopback per-uid 隔离，127.0.0.1 跨进程不可达）。
+    // 有随机 token 鉴权保护；P0 内部版可接受局域网暴露，P1 收紧为仅本地 + Unix domain socket。
+    val host: String = "0.0.0.0",
 )
 
 object BodyContext {

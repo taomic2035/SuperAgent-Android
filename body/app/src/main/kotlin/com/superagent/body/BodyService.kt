@@ -66,7 +66,7 @@ class BodyService : Service() {
         return NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.ic_menu_compass)
             .setContentTitle("超级AI助手 · 躯体")
-            .setContentText("http://127.0.0.1:8765 （本地 RPC 服务运行中）")
+            .setContentText("0.0.0.0:8765 （本地 RPC 服务运行中，Termux 可访问）")
             .setOngoing(true)
             .addAction(0, "说话", triggerIntent)
             .addAction(0, "停止", stopIntent)
