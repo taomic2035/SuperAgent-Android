@@ -9,6 +9,83 @@ export interface ResolvedModel {
   models: MutableModels
   model: Model<"openai-completions">
   label: string
+  /** M3 本地模型为主（BR-02.3 安全铁律：仅闲聊，工具集强制清空）。 */
+  localOnly: boolean
+  /** 备用云端（BR-02.2）：主模型连续失败 ≥3 次自动切换，能力表降级（可能无视觉）。 */
+  backupModel?: Model<"openai-completions">
+  backupLabel?: string
+  /** M3 本地（仅当主模型为云端时作为最终兜底）。 */
+  localModel?: Model<"openai-completions">
+  localLabel?: string
+}
+
+export function resolveModel(): ResolvedModel {
+  const glmKey = env("GLM_API_KEY", "")
+  const glmBase = env("GLM_BASE_URL", "https://open.bigmodel.cn/api/paas/v4")
+  const glmModel = env("MODEL", "glm-4.6v")
+
+  const backupUrl = env("BACKUP_LLM_URL", "")
+  const backupModel = env("BACKUP_MODEL", "")
+  const localUrl = env("LOCAL_LLM_URL", "")
+  const localModel = env("LOCAL_MODEL", "qwen3.5-2b")
+
+  // M3 纯本地模式（BR-02.3）：无云端 key 且配置了本地 → 仅闲聊（localOnly 由 main 侧执行工具清空）
+  if (!glmKey && localUrl) {
+    const { models, model, label } = buildSingle("local", "Local llama.cpp", localUrl, undefined, localModel, false)
+    return { models, model, label, localOnly: true }
+  }
+
+  if (glmKey) {
+    const models = createModels()
+    const provider = buildOpenAiCompatProvider({
+      id: "glm", name: "Zhipu GLM", baseUrl: glmBase, apiKey: glmKey,
+      modelId: glmModel, modelName: glmModel, vision: true,
+    })
+    models.setProvider(provider)
+    const model = models.getModel("glm", glmModel) as Model<"openai-completions"> | undefined
+    if (!model) throw new Error(`模型不存在: ${glmModel}`)
+    const resolved: ResolvedModel = { models, model, label: `glm/${glmModel}`, localOnly: false }
+
+    if (backupUrl && backupModel) {
+      const p = buildOpenAiCompatProvider({
+        id: "backup", name: "Backup cloud", baseUrl: backupUrl,
+        apiKey: env("BACKUP_LLM_KEY", "") || undefined,
+        modelId: backupModel, modelName: backupModel, vision: false,
+      })
+      models.setProvider(p)
+      const m = models.getModel("backup", backupModel) as Model<"openai-completions"> | undefined
+      if (m) {
+        resolved.backupModel = m
+        resolved.backupLabel = `backup/${backupModel}（无视觉降级）`
+      }
+    }
+    if (localUrl) {
+      const p = buildOpenAiCompatProvider({
+        id: "local", name: "Local llama.cpp", baseUrl: localUrl,
+        modelId: localModel, modelName: localModel, vision: false,
+      })
+      models.setProvider(p)
+      const m = models.getModel("local", localModel) as Model<"openai-completions"> | undefined
+      if (m) {
+        resolved.localModel = m
+        resolved.localLabel = `local/${localModel}（离线闲聊）`
+      }
+    }
+    return resolved
+  }
+
+  throw new Error(
+    "未配置模型：设置 GLM_API_KEY（云端，推荐）或 LOCAL_LLM_URL（端侧 llama.cpp 兜底）",
+  )
+}
+
+function buildSingle(id: string, name: string, baseUrl: string, apiKey: string | undefined, modelId: string, vision: boolean) {
+  const models = createModels()
+  const provider = buildOpenAiCompatProvider({ id, name, baseUrl, apiKey, modelId, modelName: modelId, vision })
+  models.setProvider(provider)
+  const model = models.getModel(id, modelId) as Model<"openai-completions"> | undefined
+  if (!model) throw new Error(`模型不存在: ${modelId}`)
+  return { models, model, label: `${id}/${modelId}` }
 }
 
 function buildOpenAiCompatProvider(opts: {
@@ -49,47 +126,3 @@ function buildOpenAiCompatProvider(opts: {
   })
 }
 
-export function resolveModel(): ResolvedModel {
-  const glmKey = env("GLM_API_KEY", "")
-  const glmBase = env("GLM_BASE_URL", "https://open.bigmodel.cn/api/paas/v4")
-  const glmModel = env("MODEL", "glm-4.6v")
-
-  if (glmKey) {
-    const models = createModels()
-    const provider = buildOpenAiCompatProvider({
-      id: "glm",
-      name: "Zhipu GLM",
-      baseUrl: glmBase,
-      apiKey: glmKey,
-      modelId: glmModel,
-      modelName: glmModel,
-      vision: true,
-    })
-    models.setProvider(provider)
-    const model = models.getModel("glm", glmModel) as Model<"openai-completions"> | undefined
-    if (!model) throw new Error(`模型不存在: ${glmModel}`)
-    return { models, model, label: `glm/${glmModel}` }
-  }
-
-  const localUrl = env("LOCAL_LLM_URL", "")
-  const localModel = env("LOCAL_MODEL", "qwen3.5-2b")
-  if (localUrl) {
-    const models = createModels()
-    const provider = buildOpenAiCompatProvider({
-      id: "local",
-      name: "Local llama.cpp",
-      baseUrl: localUrl,
-      modelId: localModel,
-      modelName: localModel,
-      vision: false,
-    })
-    models.setProvider(provider)
-    const model = models.getModel("local", localModel) as Model<"openai-completions"> | undefined
-    if (!model) throw new Error(`模型不存在: ${localModel}`)
-    return { models, model, label: `local/${localModel}` }
-  }
-
-  throw new Error(
-    "未配置模型：设置 GLM_API_KEY（云端，推荐）或 LOCAL_LLM_URL（端侧 llama.cpp 兜底）",
-  )
-}

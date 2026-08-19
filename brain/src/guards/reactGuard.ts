@@ -25,7 +25,8 @@ export interface ReActGuardConfig {
 
 const DEFAULTS: ReActGuardConfig = {
   maxSteps: 30,
-  noProgressThreshold: 3,
+  // Kestrel 生产教训（OrchestratorConfig:12）：K=3 过早放弃合法慢任务（加载页/多级菜单），放宽到 6
+  noProgressThreshold: 6,
   stuckThreshold: 3,
 }
 

@@ -47,6 +47,23 @@ export function resetGuard(): void {
   reactGuard.reset()
 }
 
+/**
+ * task.finish 证据驳回留痕（Kestrel 语义，AD-06 采纳）：
+ * 驳回计入 trace（resultKind=finish_rejected）+ 计入止损全局步数，
+ * 且前后签名相同推高 NoProgress——反复谎报完成本身就是一种"无进展"。
+ */
+export function markFinishRejected(): void {
+  addTrace({
+    tool: "task.finish",
+    args: {},
+    located: false,
+    signature: lastScreenSig,
+    timestamp: Date.now(),
+    resultKind: "finish_rejected",
+  })
+  reactGuard.record("task.finish", {}, lastScreenSig, lastScreenSig)
+}
+
 export async function beforeToolCall(
   context: BeforeToolCallContext,
 ): Promise<{ block: true; reason: string; terminate: true } | undefined> {

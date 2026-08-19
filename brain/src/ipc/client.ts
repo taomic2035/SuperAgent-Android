@@ -2,6 +2,9 @@ import type { BodyEvent, HealthStatus, RpcRequest, RpcResponse } from "./types.t
 
 let nextId = 1
 
+/** 与 body `BodyContext.PROTOCOL_VERSION` 同步（docs/07 契约；CT-05 镜像测试互验）。 */
+export const EXPECTED_PROTOCOL_VERSION = 2
+
 export class BodyUnavailableError extends Error {
   constructor(message: string) {
     super(message)
@@ -105,7 +108,16 @@ export class BodyClient {
   async waitForBody(attempts = 60, intervalMs = 2000): Promise<void> {
     for (let i = 0; i < attempts; i++) {
       const h = await this.health()
-      if (h.ok) return
+      if (h.ok) {
+        if (h.protocolVersion !== EXPECTED_PROTOCOL_VERSION) {
+          // PROTOCOL_MISMATCH：fail fast，不重试（重试无意义，需升级对端）
+          throw new BodyRpcError(
+            "PROTOCOL_MISMATCH",
+            `body protocolVersion=${h.protocolVersion}，brain 期望 ${EXPECTED_PROTOCOL_VERSION}（docs/07 契约），请升级 body APK`,
+          )
+        }
+        return
+      }
       await new Promise((r) => setTimeout(r, intervalMs))
     }
     throw new BodyUnavailableError("body 服务未就绪（检查 Android 侧服务是否启动）")

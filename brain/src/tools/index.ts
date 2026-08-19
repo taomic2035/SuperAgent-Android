@@ -1,7 +1,11 @@
 import { Type } from "typebox"
 import type { AgentTool } from "@earendil-works/pi-agent-core"
-import { getRun, setBaseline, finishRun } from "../runState.ts"
+import { getRun, setBaseline, finishRun, noteFinishRejected } from "../runState.ts"
+import { markFinishRejected } from "../guards/index.ts"
 import { verifyEvidence } from "../guards/finish.ts"
+import { redactScreen } from "../guards/redact.ts"
+import type { RelevanceCheck } from "../guards/relevance.ts"
+import { BodyRpcError } from "../ipc/client.ts"
 import type { BodyClient } from "../ipc/client.ts"
 import type {
   ActionResult,
@@ -30,7 +34,11 @@ const HITL_RPC_TIMEOUT_MS = 90_000
 const SPEECH_RPC_TIMEOUT_MS = 75_000
 const SKILL_RUN_RPC_TIMEOUT_MS = 150_000
 
-export function buildTools(body: BodyClient, personas: Record<string, Persona>): AgentTool<any>[] {
+export function buildTools(
+  body: BodyClient,
+  personas: Record<string, Persona>,
+  relevance?: RelevanceCheck,
+): AgentTool<any>[] {
   const personaMap = new Map(Object.entries(personas))
   const say = (personaName: string | undefined) => personaMap.get(personaName ?? "")?.voice ?? personas.assistant.voice
 
@@ -45,7 +53,8 @@ export function buildTools(body: BodyClient, personas: Record<string, Persona>):
       execute: async (_id, params: any) => {
         const screen = await body.rpc<ScreenResult>("perceive.screen", { mode: params.mode ?? "auto" })
         setBaseline(screen)
-        return { content: [{ type: "text", text: JSON.stringify(screen) }], details: { signature: screen.signature } }
+        // BR-04.4：raw 只进 runState；进模型上下文的 content 打码（signature/基线/证据核验仍用 raw）
+        return { content: [{ type: "text", text: JSON.stringify(redactScreen(screen)) }], details: { signature: screen.signature } }
       },
     },
     {
@@ -289,7 +298,19 @@ export function buildTools(body: BodyClient, personas: Record<string, Persona>):
         args: Type.Optional(Type.Record(Type.String(), Type.String())),
       }),
       execute: async (toolCallId, params: any) => {
-        const result = await body.rpc<SkillRunResult>("skill.run", params, idem("skill.run", toolCallId), SKILL_RUN_RPC_TIMEOUT_MS)
+        let result: SkillRunResult
+        try {
+          result = await body.rpc<SkillRunResult>("skill.run", params, idem("skill.run", toolCallId), SKILL_RUN_RPC_TIMEOUT_MS)
+        } catch (err) {
+          // BD-07.3 Recovery mode：失配上下文透传给模型，从失配处续走而非从头重来
+          if (err instanceof BodyRpcError && err.code === "SKILL_STALE") {
+            throw new Error(
+              `技能 ${params.name} 回放失配（${err.message}）。已完成的步骤无需重做：先 perceive.screen 确认当前位置，从失配处现场规划继续；` +
+                "任务最终成功后 task.finish 会自动重新固化该技能（以新轨迹复活为 candidate）。",
+            )
+          }
+          throw err
+        }
         if (result.result === "sensitive_handoff") {
           return { content: [{ type: "text", text: `技能 ${params.name} 在 ${result.completedSteps} 步后遇敏感步骤，已停手转人工接管。` }], details: { result } }
         }
@@ -363,8 +384,30 @@ export function buildTools(body: BodyClient, personas: Record<string, Persona>):
         const run = getRun()
         const screen = await body.rpc<ScreenResult>("perceive.screen", { mode: "auto" })
         const verdict = verifyEvidence(screen, run.baselineScreen, params.evidence)
-        if (!verdict.ok) throw new Error(`证据核验失败：${verdict.reason}。请先重新感知屏幕，确认任务真正完成再调用。`)
+        if (!verdict.ok) {
+          const rejects = noteFinishRejected()
+          markFinishRejected()
+          const escalation =
+            rejects >= 3
+              ? `（已连续 ${rejects} 次证据驳回，疑似无法自证完成——立即 hitl.handoff 转人工，不要再尝试 task.finish）`
+              : ""
+          throw new Error(`证据核验失败：${verdict.reason}。请先重新感知屏幕，确认任务真正完成再调用。${escalation}`)
+        }
+        // BR-04.3 相关性软门（fail-open：审查不可达/超时放行；硬门仍是存在性+新颖性）
+        if (relevance) {
+          const rel = await relevance(run.goal, params.evidence, screen.pageTexts ?? []).catch(() => null)
+          if (rel && !rel.ok) {
+            const rejects = noteFinishRejected()
+            markFinishRejected()
+            const escalation =
+              rejects >= 3
+                ? `（已连续 ${rejects} 次证据驳回——立即 hitl.handoff 转人工）`
+                : ""
+            throw new Error(`证据核验失败：证据「${params.evidence}」与任务目标不相关（${rel.reason}）。请寻找与目标直接相关的新证据。${escalation}`)
+          }
+        }
         let learned: string | undefined
+        let learnError: string | undefined
         const locatedSteps = run.trace.filter((s) => s.located)
         if (locatedSteps.length >= 2 && screen.appPackage) {
           try {
@@ -374,14 +417,16 @@ export function buildTools(body: BodyClient, personas: Record<string, Persona>):
               trace: locatedSteps,
             })
             learned = result.slug
-          } catch {
-            learned = undefined
+          } catch (err) {
+            // 固化失败不吞：任务仍算完成，但失败必须可观测（P1 修复——曾静默吞掉 body 序列化 bug）
+            learnError = err instanceof Error ? err.message : String(err)
+            console.warn(`[brain] skill.learn 固化失败：${learnError}`)
           }
         }
         finishRun("success")
         return {
           content: [{ type: "text", text: `任务完成：${params.summary}` }],
-          details: { evidenceVerified: true, traceSteps: locatedSteps.length, learned },
+          details: { evidenceVerified: true, traceSteps: locatedSteps.length, learned, learnError },
         }
       },
     },

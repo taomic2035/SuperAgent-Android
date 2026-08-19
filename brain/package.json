@@ -13,7 +13,8 @@
     "smoke": "tsx test/smoke.ts",
     "live-glm": "tsx test/live-glm.ts",
     "typecheck": "tsc --noEmit",
-    "start": "tsx src/main.ts"
+    "start": "tsx src/main.ts",
+    "contract": "tsx test/contract.ts"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "latest",
