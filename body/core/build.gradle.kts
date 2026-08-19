@@ -1,6 +1,9 @@
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
+    // 2026-08-19 G1 门 3 阻塞修复：StoredSkill/SkillStep 等 @Serializable 无编译期 serializer，
+    // SkillStore.save() 必抛 "Serializer for class 'StoredSkill' is not found"（真机 T2 复现）
+    alias(libs.plugins.kotlin.serialization)
 }
 
 android {

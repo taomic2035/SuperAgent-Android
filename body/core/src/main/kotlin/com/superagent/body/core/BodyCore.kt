@@ -15,6 +15,7 @@ import com.superagent.body.core.speech.SpeechEngine
 import com.superagent.body.core.speech.SpeechUnavailable
 import com.superagent.body.core.speech.VoiceConfig
 import com.superagent.common.ActionResult
+import com.superagent.common.CommitBoundaryGuard
 import com.superagent.common.JsonElement
 import com.superagent.common.RpcResponse
 import com.superagent.common.SayResult
@@ -26,6 +27,7 @@ import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -80,6 +82,9 @@ class BodyCore(
             val p = params(req)
             val x = p.int("x") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 x")
             val y = p.int("y") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 y")
+            commitBoundaryAt(x, y)?.let { label ->
+                return@rpc RpcResponse.failure(req.id, "COMMIT_BOUNDARY", "落点「$label」是提交边界动作，坐标点击不可绕过（转 hitl）", "commit")
+            }
             ok(req, controller.tap(x, y))
         }
 
@@ -87,6 +92,9 @@ class BodyCore(
             val p = params(req)
             val x = p.int("x") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 x")
             val y = p.int("y") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 y")
+            commitBoundaryAt(x, y)?.let { label ->
+                return@rpc RpcResponse.failure(req.id, "COMMIT_BOUNDARY", "落点「$label」是提交边界动作，长按不可绕过（转 hitl）", "commit")
+            }
             ok(req, controller.longPress(x, y, p.int("durationMs")?.toLong() ?: 600L))
         }
 
@@ -171,7 +179,17 @@ class BodyCore(
             val v = voice
             Thread {
                 runCatching { play.say(t, v) }
-                    .onFailure { e -> Log.e("BodyCore", "TTS 播放失败", e) }
+                    .onFailure { e ->
+                        Log.e("BodyCore", "TTS 播放失败", e)
+                        // fire-and-forget 的失败也要可观测（brain 可经 /events 感知），不静默吞
+                        events.emit(
+                            "speech",
+                            buildJsonObject {
+                                put("kind", "say_failed")
+                                put("error", e.message ?: e.javaClass.simpleName)
+                            },
+                        )
+                    }
             }.start()
             ok(req, SayResult("speaker"))
         }
@@ -301,6 +319,19 @@ class BodyCore(
 
     private fun params(req: com.superagent.common.RpcRequest): Params =
         Params(req.params?.jsonObject ?: buildJsonObject {})
+
+    /**
+     * 落点提交边界校验（P0 安全，2026-08-19 真机实测引入）：
+     * 模型会用 control.tap 坐标点击绕过 selectOption 的词表拦截。
+     * tap/longPress 前感知落点所在节点，label 命中提交边界词 → 拦截（与 selectOption 同语义）。
+     * 感知失败/落点无节点 → 放行（红线拦截不能因感知故障误伤正常操控）。
+     */
+    private fun commitBoundaryAt(x: Int, y: Int): String? {
+        val nodes = runCatching { perceiver.perceive("a11y").nodes }.getOrNull() ?: return null
+        val hit = nodes.firstOrNull { it.bounds.left <= x && x <= it.bounds.right && it.bounds.top <= y && y <= it.bounds.bottom }
+            ?: return null
+        return if (CommitBoundaryGuard.isCommitBoundary(hit.label)) hit.label else null
+    }
 
     private class Params(private val obj: JsonObject) {
         val json: JsonObject get() = obj

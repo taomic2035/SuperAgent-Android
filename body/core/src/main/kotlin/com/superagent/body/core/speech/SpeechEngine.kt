@@ -54,11 +54,14 @@ class SpeechEngine(private val context: Context) {
     /** Kokoro 的 espeak-ng-data 必须落盘（sherpa 无法直接从 assets 读目录），首次使用时复制。 */
     private val espeakDir: String by lazy {
         val target = File(context.filesDir, "sherpa/espeak-ng-data")
-        if (!target.exists() && hasAsset("sherpa/models/kokoro-multi-lang-v1_0/espeak-ng-data/lang")) {
-            copyAssetsDir(
-                "sherpa/models/kokoro-multi-lang-v1_0/espeak-ng-data",
-                target,
-            )
+        // int8 包自带同份 espeak 数据；fp32 目录可能被精简，两个来源按存在性取
+        val src =
+            if (hasAssetDir("sherpa/models/kokoro-multi-lang-v1_0/espeak-ng-data")) "sherpa/models/kokoro-multi-lang-v1_0/espeak-ng-data"
+            else "sherpa/models/kokoro-int8-multi-lang-v1_0/espeak-ng-data"
+        // 注意探测目录必须用 assets.list()：assets.open() 对目录抛 FileNotFoundException，
+        // 曾导致守卫恒 false → 拷贝被跳过 → dataDir 指向不存在路径 → sherpa native exit(1) 整进程死亡
+        if (!target.exists() && hasAssetDir(src)) {
+            copyAssetsDir(src, target)
         }
         target.absolutePath
     }
@@ -249,12 +252,23 @@ class SpeechEngine(private val context: Context) {
         tts?.let { return it }
         synchronized(this) {
             tts?.let { return it }
-            val modelDir = "sherpa/models/kokoro-multi-lang-v1_0"
-            if (!hasAsset("$modelDir/model.onnx")) return null
+            // G3.1（2026-08-19）：int8 优先（fp32 实测 PSS 尖峰 808MB → native exit(1)；
+            // int8 体积 114MB，session 内存预期 ~400MB）。int8 缺失时退回 fp32。
+            val int8Dir = "sherpa/models/kokoro-int8-multi-lang-v1_0"
+            val fp32Dir = "sherpa/models/kokoro-multi-lang-v1_0"
+            val useInt8 = hasAsset("$int8Dir/model.int8.onnx")
+            val modelDir = if (useInt8) int8Dir else fp32Dir
+            val modelFile = if (useInt8) "model.int8.onnx" else "model.onnx"
+            if (!hasAsset("$modelDir/$modelFile")) return null
+            // native 层对坏 dataDir 是硬 exit(1)（整进程死、无异常可捕），必须先验后建：
+            // 宁可返回可 typed 处理的 SpeechUnavailable，也不让进程被 native 拖死
+            if (!File(espeakDir, "lang").isDirectory) {
+                throw SpeechUnavailable("espeak-ng-data 不完整（lang/ 缺失，拷贝失败或包内缺数据）")
+            }
             val config = OfflineTtsConfig(
                 model = OfflineTtsModelConfig(
                     kokoro = OfflineTtsKokoroModelConfig(
-                        model = "$modelDir/model.onnx",
+                        model = "$modelDir/$modelFile",
                         voices = "$modelDir/voices.bin",
                         tokens = "$modelDir/tokens.txt",
                         dataDir = espeakDir,
@@ -310,6 +324,10 @@ class SpeechEngine(private val context: Context) {
 
     private fun hasAsset(path: String): Boolean =
         runCatching { assets.open(path).close(); true }.getOrDefault(false)
+
+    /** 探测 assets 内目录（open() 对目录会抛异常，目录必须用 list()）。 */
+    private fun hasAssetDir(path: String): Boolean =
+        runCatching { !assets.list(path).isNullOrEmpty() }.getOrDefault(false)
 }
 
 /** 音色配置（对齐 Clowder VoiceConfig 契约子集）。 */
