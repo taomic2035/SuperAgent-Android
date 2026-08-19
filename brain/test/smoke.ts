@@ -185,6 +185,33 @@ async function main(): Promise<void> {
       ok("skill.run SKILL_STALE 带续走上下文（recovery 提示）")
     }
 
+    // 感知 L1：vision 模式取 blob + VLM marks 并入（mock VLM 识别器）
+    {
+      const toolsV = buildTools(
+        body,
+        loadPersonas().personas,
+        undefined,
+        async (b64) => {
+          assert.ok(b64.length > 0)
+          return [
+            { index: 0, text: "立即支付", center: { x: 800, y: 1500 } },
+            { index: 1, text: "返回", center: { x: 40, y: 60 } },
+          ]
+        },
+      )
+      const perceive = toolsV.find((t) => t.name === "perceive.screen")!
+      const r = (await perceive.execute("v1", { mode: "vision" })) as {
+        content: Array<{ type: string; text: string }>
+        details: { signature?: string }
+      }
+      const parsed = JSON.parse(r.content[0].text) as ScreenResult
+      assert.equal(parsed.kind, "vision")
+      assert.equal(parsed.marks?.length, 2)
+      assert.deepEqual(parsed.pageTexts, ["立即支付", "返回"])
+      assert.ok(r.details.signature) // a11y 签名保留（ReAct 连续性）
+      ok("perceive.screen(vision)：blob 取图 + VLM marks 并入，signature 保留")
+    }
+
     // TC-08：证据驳回计数（×3 升级建议转人工；好证据通过）
     {
       const tmp2 = await mkdtemp(join(tmpdir(), "sa-runstate2-"))

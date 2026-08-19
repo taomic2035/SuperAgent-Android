@@ -5,6 +5,7 @@ import { markFinishRejected } from "../guards/index.ts"
 import { verifyEvidence } from "../guards/finish.ts"
 import { redactScreen } from "../guards/redact.ts"
 import type { RelevanceCheck } from "../guards/relevance.ts"
+import type { VisionMarksFn } from "../guards/vision.ts"
 import { BodyRpcError } from "../ipc/client.ts"
 import type { BodyClient } from "../ipc/client.ts"
 import type {
@@ -38,6 +39,7 @@ export function buildTools(
   body: BodyClient,
   personas: Record<string, Persona>,
   relevance?: RelevanceCheck,
+  vision?: VisionMarksFn,
 ): AgentTool<any>[] {
   const personaMap = new Map(Object.entries(personas))
   const say = (personaName: string | undefined) => personaMap.get(personaName ?? "")?.voice ?? personas.assistant.voice
@@ -46,15 +48,30 @@ export function buildTools(
     {
       name: "perceive.screen",
       label: "感知屏幕",
-      description: "获取当前屏幕状态：界面元素、文字、页面签名。mode=auto 自动选路（a11y/视觉/OCR），可强制指定。",
+      description: "获取当前屏幕状态：界面元素、文字、页面签名。mode=auto 自动选路（a11y/视觉/OCR），可强制指定。vision 模式返回截图识别的可交互元素（适合 WebView/游戏等无障碍覆盖差的页面）。",
       parameters: Type.Object({
         mode: Type.Optional(Type.Union([Type.Literal("auto"), Type.Literal("a11y"), Type.Literal("vision"), Type.Literal("ocr")])),
       }),
       execute: async (_id, params: any) => {
         const screen = await body.rpc<ScreenResult>("perceive.screen", { mode: params.mode ?? "auto" })
         setBaseline(screen)
+        let enriched = screen
+        // 感知 L1：body 已给截图引用且有识别器 → 取图送 VLM，marks 并入（识别失败 fail-open 留空）。
+        // 注意：VLM 返回的是截图像素坐标（body 长边 1600），control.tap 用的是屏幕像素——
+        // 换算因子（屏幕分辨率/截图尺寸）待真机标定后在此处启用线性缩放。
+        if (screen.screenshotRef && vision) {
+          try {
+            const buf = await body.blob(screen.screenshotRef)
+            const marks = await vision(buf.toString("base64"))
+            enriched = marks.length
+              ? { ...screen, marks, pageTexts: marks.map((m) => m.text) }
+              : screen
+          } catch {
+            enriched = screen // 取图/识别失败：保留 body 原始结果
+          }
+        }
         // BR-04.4：raw 只进 runState；进模型上下文的 content 打码（signature/基线/证据核验仍用 raw）
-        return { content: [{ type: "text", text: JSON.stringify(redactScreen(screen)) }], details: { signature: screen.signature } }
+        return { content: [{ type: "text", text: JSON.stringify(redactScreen(enriched)) }], details: { signature: screen.signature } }
       },
     },
     {

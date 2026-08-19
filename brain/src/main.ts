@@ -6,6 +6,7 @@ import { resolveModel } from "./model.ts"
 import { buildTools } from "./tools/index.ts"
 import { beforeToolCall, afterToolCall, resetSensitiveSession } from "./guards/index.ts"
 import { buildLlmRelevanceCheck } from "./guards/relevance.ts"
+import { buildLlmVisionMarks } from "./guards/vision.ts"
 import { loadPersonas } from "./personas/personas.ts"
 import { buildSystemPrompt, buildChatOnlyPrompt } from "./personas/promptBuilder.ts"
 import { beginRun, hasResumableRun, resumeRun, finishRun, peekRun, buildResumeContext } from "./runState.ts"
@@ -56,13 +57,18 @@ async function main(): Promise<void> {
     env("EVIDENCE_RELEVANCE", "1") === "1" && !localOnly
       ? buildLlmRelevanceCheck(models, resolved.model)
       : undefined
+  // 感知 L1 视觉识别（VISION=0 可关；backup 模型无视觉时降级为不识别）
+  const vision =
+    env("VISION", "1") === "1" && !localOnly && modelTier === "primary"
+      ? buildLlmVisionMarks(models, resolved.model)
+      : undefined
 
   let agent = new Agent({
     initialState: {
       systemPrompt: localOnly ? buildChatOnlyPrompt(persona) : buildSystemPrompt(persona, skills.skills),
       model: resolved.model,
       // BR-02.3 安全铁律：M3 本地模型不授予设备控制权（弱模型+控制权=安全反模式）
-      tools: localOnly ? [] : buildTools(body, personaConfig.personas, relevance),
+      tools: localOnly ? [] : buildTools(body, personaConfig.personas, relevance, vision),
     },
     streamFn: models.streamSimple.bind(models),
     beforeToolCall,
@@ -100,7 +106,7 @@ async function main(): Promise<void> {
         // 切到 local = 离线闲聊铁律；backup 保留全部工具（仅丢视觉，工具仍可用）
         systemPrompt: modelTier === "local" ? buildChatOnlyPrompt(persona) : buildSystemPrompt(persona, skills.skills),
         model: nextModel,
-        tools: modelTier === "local" ? [] : buildTools(body, personaConfig.personas, relevance),
+        tools: modelTier === "local" ? [] : buildTools(body, personaConfig.personas, relevance, vision),
       },
       streamFn: models.streamSimple.bind(models),
       beforeToolCall,

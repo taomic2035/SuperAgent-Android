@@ -52,6 +52,13 @@ export function startMockBody(options: MockBodyOptions): Promise<{ port: number;
     switch (method) {
       case "perceive.screen": {
         const p = (params as { mode?: string }) ?? {}
+        if (p.mode === "vision") {
+          // vision 截图路径不消耗 4 屏轮换步数（与 a11y 轮换解耦，保 smoke 步数确定性）
+          return void sendJson(res, 200, reply({
+            signature: "mock-sig-vision", kind: "vision" as const, blank: false,
+            appPackage: "com.example.shop", screenshotRef: "shot-1.jpg",
+          }))
+        }
         steps++
         events.push({ seq: ++eventSeq, type: "state", payload: { screen: steps % 4 } })
         const base = {
@@ -167,6 +174,14 @@ export function startMockBody(options: MockBodyOptions): Promise<{ port: number;
         result: { ok: true, bootId, protocolVersion: 2, uptimeMs: 1234, services: { a11y: true, speech: true } },
         error: null,
       })
+    }
+    if (req.method === "GET" && url.pathname.startsWith("/blob/")) {
+      if (req.headers.authorization !== `Bearer ${token}`) {
+        return void sendJson(res, 401, { id: null, ok: false, error: { code: "UNAUTHORIZED", message: "token 无效" } })
+      }
+      const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0xff, 0xd9])
+      res.writeHead(200, { "Content-Type": "image/jpeg", "Content-Length": jpeg.length })
+      return void res.end(jpeg)
     }
     if (req.method === "GET" && url.pathname === "/events") {
       const since = Number.parseInt(url.searchParams.get("since") ?? "0", 10)

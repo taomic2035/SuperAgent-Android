@@ -105,6 +105,16 @@ export class BodyClient {
     }
   }
 
+  /** 取截图 blob（视觉感知 L1），返回原始字节。 */
+  async blob(ref: string): Promise<Buffer> {
+    const res = await fetch(`${this.baseUrl}/blob/${encodeURIComponent(ref)}`, {
+      headers: { Authorization: `Bearer ${this.token}` },
+      signal: AbortSignal.timeout(10_000),
+    })
+    if (!res.ok) throw new BodyUnavailableError(`blob ${res.status}`)
+    return Buffer.from(await res.arrayBuffer())
+  }
+
   async waitForBody(attempts = 60, intervalMs = 2000): Promise<void> {
     for (let i = 0; i < attempts; i++) {
       const h = await this.health()
