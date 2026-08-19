@@ -91,7 +91,9 @@ class SkillStore(
                 )
             }
         if (steps.isEmpty()) throw IllegalArgumentException("轨迹无可回放步骤")
-        val slug = "skill-$appPackage-${goal.take(8)}"
+        // #13：纯 take(8) 前缀会撞名（"点一杯奶茶"/"点一杯咖啡"同前缀互相覆盖）——
+        // 前缀保可读性 + goal 哈希后缀防碰撞；同 goal 重复学习仍同 slug（复活语义不变）
+        val slug = "skill-$appPackage-${goal.take(12)}-${Integer.toHexString(goal.hashCode()).take(8)}"
         // 同 slug 覆盖式保存 = ADR-5 复活语义：stale 后现场续走成功 → 以新轨迹重固化，
         // 状态归零为 candidate（旧统计作废——旧轨迹已被证明失配，不值得保留）
         val existing = loadAll().firstOrNull { it.name == slug }
