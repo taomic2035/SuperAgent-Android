@@ -27,6 +27,13 @@ class UiStateController(private val events: EventBus) {
     var state: UiState = UiState.OFFLINE
         private set
 
+    @Volatile
+    private var lastHeartbeatMs = 0L
+
+    private val offlineChecker = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r ->
+        Thread(r, "ui-offline-checker").apply { isDaemon = true }
+    }
+
     private val recent = ArrayDeque<String>(5)
     private var lastBrainSeq = -1L
     private var activeTaskId = ""
@@ -35,7 +42,14 @@ class UiStateController(private val events: EventBus) {
     private val listeners = mutableListOf<(Snapshot) -> Unit>()
 
     fun start() {
-        events.addListener { type, payload -> onEvent(type, payload) }
+        events.addListener { type, payloadJson -> onEvent(type, payloadJson) }
+        // UX-11：10s 无心跳 → OFFLINE（brain 停止/崩溃/Termux 被 kill）；恢复心跳 → IDLE
+        offlineChecker.scheduleAtFixedRate({
+            val elapsed = System.currentTimeMillis() - lastHeartbeatMs
+            if (elapsed > 10_000 && state != UiState.OFFLINE) {
+                transition(UiState.OFFLINE, "大脑未连接")
+            }
+        }, 11, 3, java.util.concurrent.TimeUnit.SECONDS)
     }
 
     private fun onEvent(type: String, payloadJson: String?) {
@@ -48,6 +62,13 @@ class UiStateController(private val events: EventBus) {
 
     private fun onBrain(payloadJson: String) {
         val ev = runCatching { Json.decodeFromString<BrainEvent>(payloadJson) }.getOrNull() ?: return
+        // 心跳：brain 在线信号，恢复 IDLE（不改变运行态——心跳只证明连通性）
+        if (ev.state == "heartbeat") {
+            lastHeartbeatMs = ev.timestamp
+            if (state == UiState.OFFLINE) transition(UiState.IDLE, "")
+            return
+        }
+        lastHeartbeatMs = ev.timestamp // 任何 brain 事件也证明在线
         // 旧任务/乱序事件不回退状态（docs/12 §5.3.5）
         if (ev.taskId != activeTaskId) {
             if (ev.state != "prompt_start") return
@@ -123,6 +144,21 @@ class UiStateController(private val events: EventBus) {
 
     @Synchronized
     fun snapshot() = Snapshot(state, recent.lastOrNull() ?: "", recent.toList(), unreadResult)
+
+    /** FGS 通知兜底文案（docs/12 §3.1）：无 overlay 时用户仍能看到状态。 */
+    fun notificationText(): String = when (state) {
+        UiState.OFFLINE -> "离线 · 大脑未连接"
+        UiState.MINI -> "待命"
+        UiState.IDLE -> "就绪 · 点击悬浮球或通知"
+        UiState.THINKING -> "理解中 · ${recent.lastOrNull() ?: ""}"
+        UiState.RUNNING -> "执行中 · ${recent.lastOrNull() ?: ""}"
+        UiState.PAUSING -> "正在暂停…"
+        UiState.PAUSED -> "已暂停"
+        UiState.AWAITING_CONFIRM -> "等待确认"
+        UiState.BLOCKED -> "需要处理 · ${recent.lastOrNull() ?: ""}"
+        UiState.COMPLETED -> "已完成 · ${recent.lastOrNull() ?: ""}"
+        UiState.FAILED -> "失败 · ${recent.lastOrNull() ?: ""}"
+    }
 
     @Synchronized
     private fun publish() {

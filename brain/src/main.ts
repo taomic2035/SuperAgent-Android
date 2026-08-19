@@ -210,6 +210,7 @@ async function runRepl(prompt: (input: string) => Promise<void>): Promise<void> 
 async function runVoiceLoop(body: BodyClient, prompt: (input: string) => Promise<void>): Promise<void> {
   console.log("\n[brain] 语音模式就绪。按躯体通知栏按钮触发对话。\n")
   let lastEventSeq = 0
+  let lastHeartbeat = Date.now()
   for (;;) {
     let events: BodyEvent[] = []
     try {
@@ -217,6 +218,14 @@ async function runVoiceLoop(body: BodyClient, prompt: (input: string) => Promise
     } catch {
       await sleep(2000)
       continue
+    }
+    // UI-0 slice2（UX-11）：brain 心跳——5s 一次（短于 body 10s OFFLINE 阈值），fire-and-forget
+    if (Date.now() - lastHeartbeat > 5000) {
+      lastHeartbeat = Date.now()
+      void body.rpc("brain.event", {
+        taskId: "heartbeat", seq: Date.now(), state: "heartbeat",
+        displayText: "", requiresUser: "none", timestamp: Date.now(),
+      }).catch(() => undefined)
     }
     for (const ev of events) {
       lastEventSeq = Math.max(lastEventSeq, ev.seq)
