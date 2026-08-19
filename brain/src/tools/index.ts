@@ -1,6 +1,6 @@
 import { Type } from "typebox"
 import type { AgentTool } from "@earendil-works/pi-agent-core"
-import { getRun, setBaseline, finishRun, noteFinishRejected } from "../runState.ts"
+import { getRun, setBaseline, finishRun, noteFinishRejected, markFinishVerified } from "../runState.ts"
 import { markFinishRejected } from "../guards/index.ts"
 import { verifyEvidence } from "../guards/finish.ts"
 import { redactScreen } from "../guards/redact.ts"
@@ -440,6 +440,7 @@ export function buildTools(
             console.warn(`[brain] skill.learn 固化失败：${learnError}`)
           }
         }
+        markFinishVerified()
         finishRun("success")
         return {
           content: [{ type: "text", text: `任务完成：${params.summary}` }],

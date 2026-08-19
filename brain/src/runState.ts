@@ -21,6 +21,8 @@ export interface RunState {
   failureReason?: string
   /** task.finish 连续证据驳回次数（成功清零；TC-08：≥3 次)-(建议转人工）。 */
   finishRejectCount?: number
+  /** 该 run 是否经 task.finish 证据核验成功收尾（区分"模型口头收笔"与"证据验收完成"，审计用）。 */
+  finishVerified?: boolean
 }
 
 function stateDir(): string {
@@ -90,6 +92,13 @@ function readHistory(file: string): RunState[] {
   } catch {
     return []
   }
+}
+
+/** task.finish 证据核验通过时调用（在 finishRun("success") 之前）。 */
+export function markFinishVerified(): void {
+  if (!current) return
+  current.finishVerified = true
+  persist()
 }
 
 /** task.finish 证据驳回计数（TC-08：连续 ≥3 次应转人工）。 */
@@ -171,6 +180,7 @@ function persist(): void {
       outcome: current.outcome,
       failureReason: current.failureReason ? redactGoal(current.failureReason) : undefined,
       finishRejectCount: current.finishRejectCount,
+      finishVerified: current.finishVerified,
     }
     writeFileSync(stateFile(), JSON.stringify(redacted), "utf8")
   } catch {

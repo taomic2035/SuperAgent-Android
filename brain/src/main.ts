@@ -52,16 +52,21 @@ async function main(): Promise<void> {
   let tierLabel = resolved.label
   console.log(`[brain] 模型：${tierLabel}${localOnly ? "（离线闲聊模式，工具集已清空）" : ""}`)
 
-  // BR-04.3 证据相关性软门（fail-open）；EVIDENCE_RELEVANCE=0 可关
-  const relevance =
-    env("EVIDENCE_RELEVANCE", "1") === "1" && !localOnly
-      ? buildLlmRelevanceCheck(models, resolved.model)
-      : undefined
-  // 感知 L1 视觉识别（VISION=0 可关；backup 模型无视觉时降级为不识别）
-  const vision =
-    env("VISION", "1") === "1" && !localOnly && modelTier === "primary"
-      ? buildLlmVisionMarks(models, resolved.model)
-      : undefined
+  // BR-04.3 证据相关性软门（fail-open）+ 感知 L1 视觉识别；**随模型层联动重建**（降级链脑裂修复：
+  // 切到 backup 后若仍绑垂死的 primary，相关性/视觉会持续失败只能靠 fail-open 硬扛）
+  let relevance: ReturnType<typeof buildLlmRelevanceCheck> | undefined
+  let vision: ReturnType<typeof buildLlmVisionMarks> | undefined
+  function rebuildSidecars(tier: "primary" | "backup" | "local") {
+    relevance =
+      env("EVIDENCE_RELEVANCE", "1") === "1" && tier !== "local"
+        ? buildLlmRelevanceCheck(models, tier === "primary" ? resolved.model : resolved.backupModel!!)
+        : undefined
+    vision =
+      env("VISION", "1") === "1" && tier === "primary" && !localOnly
+        ? buildLlmVisionMarks(models, resolved.model)
+        : undefined
+  }
+  rebuildSidecars(modelTier)
 
   let agent = new Agent({
     initialState: {
@@ -100,6 +105,7 @@ async function main(): Promise<void> {
       return false
     }
     llmFailures = 0
+    rebuildSidecars(modelTier) // 相关性判官跟随新模型层；local 层清空、backup 层无视觉
     const nextModel = modelTier === "backup" ? resolved.backupModel! : resolved.localModel!
     agent = new Agent({
       initialState: {
