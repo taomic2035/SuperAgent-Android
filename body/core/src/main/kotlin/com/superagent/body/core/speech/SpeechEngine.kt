@@ -15,6 +15,7 @@ import com.k2fsa.sherpa.onnx.OfflineTts
 import com.k2fsa.sherpa.onnx.OfflineTtsConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsKokoroModelConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
+import com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig
 import com.k2fsa.sherpa.onnx.SpeakerEmbeddingExtractor
 import com.k2fsa.sherpa.onnx.SpeakerEmbeddingExtractorConfig
 import com.k2fsa.sherpa.onnx.SpeakerEmbeddingManager
@@ -51,6 +52,14 @@ class SpeechEngine(private val context: Context) {
 
     private val recorder = AudioRecorder(File(context.cacheDir, "audio"))
 
+    /** VITS 的 jieba dict 必须落盘（同 espeak：sherpa 只能从文件系统读目录），首次使用时复制。 */
+    private val vitsDictDir: String by lazy {
+        val target = File(context.filesDir, "sherpa/vits-dict")
+        val src = "sherpa/models/vits-zh-hf-fanchen-C/dict"
+        if (!target.exists() && hasAssetDir(src)) copyAssetsDir(src, target)
+        target.absolutePath
+    }
+
     /** Kokoro 的 espeak-ng-data 必须落盘（sherpa 无法直接从 assets 读目录），首次使用时复制。 */
     private val espeakDir: String by lazy {
         val target = File(context.filesDir, "sherpa/espeak-ng-data")
@@ -83,7 +92,9 @@ class SpeechEngine(private val context: Context) {
 
     fun isReady(): Map<String, Boolean> = mapOf(
         "asr" to hasAsset("sherpa/models/sensevoice-ctc-int8-zh/model.onnx"),
-        "tts" to hasAsset("sherpa/models/kokoro-multi-lang-v1_0/model.onnx"),
+        "tts" to (hasAsset("sherpa/models/vits-zh-hf-fanchen-C/model.onnx") ||
+            hasAsset("sherpa/models/kokoro-int8-multi-lang-v1_0/model.int8.onnx") ||
+            hasAsset("sherpa/models/kokoro-multi-lang-v1_0/model.onnx")),
         "speaker" to hasAsset("sherpa/models/3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx"),
     )
 
@@ -252,7 +263,32 @@ class SpeechEngine(private val context: Context) {
         tts?.let { return it }
         synchronized(this) {
             tts?.let { return it }
-            // G3.1（2026-08-19）：int8 优先（fp32 实测 PSS 尖峰 808MB → native exit(1)；
+            // G3 Plan B（BD-04.2 规格：vits-zh 可一键切换）：Kokoro 两档在真机均 native exit(1)
+            // （fp32 PSS 808MB / int8 零内存压力均干净退），vits 走独立路径（lexicon+jieba，无 espeak）
+            // ——存在即优先，Kokoro 全缺才返回 null。
+            val vitsDir = "sherpa/models/vits-zh-hf-fanchen-C"
+            if (hasAsset("$vitsDir/model.onnx")) {
+                val dictDir = vitsDictDir
+                if (!File(dictDir, "jieba.dict.utf8").isFile) {
+                    throw SpeechUnavailable("vits jieba dict 不完整（拷贝失败或包内缺数据）")
+                }
+                val config = OfflineTtsConfig(
+                    model = OfflineTtsModelConfig(
+                        vits = OfflineTtsVitsModelConfig(
+                            model = "$vitsDir/model.onnx",
+                            lexicon = "$vitsDir/lexicon.txt",
+                            tokens = "$vitsDir/tokens.txt",
+                            dataDir = dictDir,
+                        ),
+                        numThreads = 4,
+                    ),
+                    ruleFsts = "$vitsDir/phone.fst,$vitsDir/date.fst,$vitsDir/number.fst,$vitsDir/new_heteronym.fst",
+                    ruleFars = "",
+                    maxNumSentences = 1,
+                )
+                return OfflineTts(assets, config).also { tts = it }
+            }
+            // G3.1：int8 优先（fp32 实测 PSS 尖峰 808MB → native exit(1)；
             // int8 体积 114MB，session 内存预期 ~400MB）。int8 缺失时退回 fp32。
             val int8Dir = "sherpa/models/kokoro-int8-multi-lang-v1_0"
             val fp32Dir = "sherpa/models/kokoro-multi-lang-v1_0"
