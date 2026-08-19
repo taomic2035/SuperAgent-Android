@@ -83,7 +83,7 @@ adb forward tcp:8765 tcp:8765    # PC 的 127.0.0.1:8765 → 真机 body
 ```bash
 cd body
 # 取 sherpa-onnx v1.13.2 预编译 .so（见 third/README.md §1）
-./gradlew :common:test          # 纯 JVM 模块 6 项单测
+./gradlew :common:test          # 纯 JVM 模块单测（Guard + SkillIndex，17 项）
 ./gradlew :app:assembleDebug    # 出 APK
 ```
 
@@ -107,7 +107,7 @@ super-agent/
 ├─ brain/                      # 大脑（Termux / TypeScript）
 │  ├─ src/
 │  │  ├─ ipc/                  # IPC 协议类型 + 客户端
-│  │  ├─ tools/                # android.* 工具层（21 个）
+│  │  ├─ tools/                # android.* 工具层（26 个）
 │  │  ├─ guards/               # 提交边界 + 证据闸门
 │  │  ├─ personas/             # 角色系统 + VoiceConfig
 │  │  ├─ skills/               # TF-IDF 技能检索

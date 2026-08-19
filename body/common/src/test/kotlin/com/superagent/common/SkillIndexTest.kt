@@ -40,4 +40,34 @@ class SkillIndexTest {
         assertEquals(listOf("奶", "茶", "奶茶"), tokenize("奶茶"))
         assertEquals(listOf("open", "weather"), tokenize("open weather"))
     }
+
+    // ---- 以下为 2026-08-19 文档一致性任务 T6 新增（只增不改）----
+
+    @Test
+    fun `empty or blank query returns empty`() {
+        val index = SkillIndex()
+        index.rebuild(skills)
+        assertTrue(index.retrieve("").isEmpty())
+        assertTrue(index.retrieve("   ").isEmpty())
+    }
+
+    @Test
+    fun `pure english query hits latin tokens`() {
+        val index = SkillIndex()
+        index.rebuild(skills)
+        // 查询纯英文（tokenize 后为 latin token），命中技能名 order-milk-tea 的拉丁 token
+        val hits = index.retrieve("MILK TEA")
+        assertTrue(hits.isNotEmpty())
+        assertEquals("order-milk-tea", hits.first().skill.name)
+    }
+
+    @Test
+    fun `below threshold returns empty`() {
+        val index = SkillIndex()
+        index.rebuild(skills)
+        // 自然低分：仅与文档共享一个单字 token，得分 1/sqrt(23)≈0.21 < 0.30
+        assertTrue(index.retrieve("单").isEmpty())
+        // 显式抬高阈值同样不返回
+        assertTrue(index.retrieve("帮我点一杯奶茶", threshold = 99.0).isEmpty())
+    }
 }

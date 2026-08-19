@@ -34,6 +34,17 @@ third/sherpa-onnx/jniLibs/**/*.so
 # speech models (fetch via scripts/fetch-models.sh, do not commit)
 body/app/src/main/assets/sherpa/
 
+# 本地资源/二进制一票否决（任何路径都不入库：模型/音频/安装包/压缩包/原生库）
+*.so
+*.onnx
+*.tar.bz2
+*.wav
+*.apk
+*.aar
+
+# 本地临时辅助脚本（多 agent 协作工具，非工程内容）
+scripts/handoff-watch.ps1
+
 .deveco/
 
 
@@ -43,3 +54,5 @@ brain/dist/
 brain/.super-agent/
 
 SESSION.md
+
+docs/handoff/

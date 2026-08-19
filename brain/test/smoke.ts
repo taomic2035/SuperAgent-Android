@@ -1,11 +1,20 @@
 import assert from "node:assert/strict"
+import { mkdtemp } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { startMockBody } from "./mock-body.ts"
 import { BodyClient, BodyRpcError, BodyUnavailableError } from "../src/ipc/client.ts"
 import { verifyEvidence } from "../src/guards/finish.ts"
+import { redactText, redactScreen } from "../src/guards/redact.ts"
+import { resolveModel } from "../src/model.ts"
+import { buildChatOnlyPrompt } from "../src/personas/promptBuilder.ts"
 import { ReActGuard } from "../src/guards/reactGuard.ts"
 import { afterToolCall, beforeToolCall, resetGuard } from "../src/guards/index.ts"
 import type { BeforeToolCallContext } from "@earendil-works/pi-agent-core"
 import type { AfterToolCallContext } from "@earendil-works/pi-agent-core"
+import { beginRun, addTrace, finishRun, hasResumableRun, resumeRun, resetRun, buildResumeContext, peekRun, getRun } from "../src/runState.ts"
+import { buildTools } from "../src/tools/index.ts"
+import { loadPersonas } from "../src/personas/personas.ts"
 import type { ScreenResult } from "../src/ipc/types.ts"
 
 let passed = 0
@@ -61,6 +70,83 @@ async function main(): Promise<void> {
     ok("止损拦动作工具、豁免感知/收尾/转人工通道；reset 后恢复")
   }
 
+  console.log("== 6. 断点续跑（TC-14） ==")
+  {
+    const tmp = await mkdtemp(join(tmpdir(), "sa-runstate-"))
+    process.env.SUPER_AGENT_STATE_DIR = tmp
+    try {
+      assert.equal(hasResumableRun(), false)
+      beginRun("帮我点一杯奶茶")
+      addTrace({ tool: "control.launch", args: { pkg: "com.drink" }, located: true, timestamp: Date.now() })
+      addTrace({ tool: "control.selectOption", args: { label: "大杯" }, located: false, timestamp: Date.now() })
+      addTrace({ tool: "control.typeText", args: { text: "手机号13800138000" }, located: true, timestamp: Date.now() })
+      finishRun("crashed", "进程被杀")
+      assert.equal(hasResumableRun(), true)
+      const saved = peekRun()
+      assert.ok(saved && saved.goal.includes("奶茶") && saved.trace.length === 3)
+      // 落盘保留无 PII 键（pkg/label 可复盘），文本载荷仍丢弃
+      assert.deepEqual(saved.trace[0].args, { pkg: "com.drink" })
+      assert.deepEqual(saved.trace[1].args, { label: "大杯" })
+      assert.deepEqual(saved.trace[2].args, {})
+      const ctx = buildResumeContext(saved)
+      assert.ok(ctx.includes("断点续跑") && ctx.includes("control.launch（com.drink） ✓") && ctx.includes("control.selectOption（大杯） ✗"))
+      const resumed = resumeRun()
+      assert.ok(resumed && resumed.trace.length === 3)
+      finishRun("success")
+      assert.equal(hasResumableRun(), false) // 成功终态不可续
+      resetRun()
+    } finally {
+      delete process.env.SUPER_AGENT_STATE_DIR
+    }
+    ok("中断任务可恢复/成功任务不可恢复/续跑上下文基于脱敏 trace")
+  }
+
+  console.log("== 7. 发送前脱敏（BR-04.4） ==")
+  {
+    assert.equal(redactText("身份证 110101199001011234"), "身份证 [REDACTED:身份证]")
+    assert.equal(redactText("卡号 6222 0210 0110 2345"), "卡号 [REDACTED:卡号]")
+    assert.equal(redactText("余额: ¥123.45"), "[REDACTED:余额]")
+    assert.equal(redactText("验证码 836 290"), "[REDACTED:验证码]")
+    assert.equal(redactText("加入购物车"), "加入购物车")
+    const s: ScreenResult = {
+      signature: "sig-raw", kind: "a11y", blank: false,
+      pageTexts: ["支付密码 123456", "去结算"],
+      marks: [{ index: 0, text: "支付密码 123456", center: { x: 1, y: 2 } }],
+    }
+    const r = redactScreen(s)
+    assert.equal(r.signature, "sig-raw")
+    assert.deepEqual(r.pageTexts, ["[REDACTED:密码]", "去结算"])
+    assert.equal(r.marks?.[0].text, "[REDACTED:密码]")
+    ok("LLM 上下文脱敏：身份证/卡号/关键词值掩码，signature 与无敏感文案保留")
+  }
+
+  console.log("== 8. 模型韧性（BR-02.2/02.3） ==")
+  {
+    const hadGlm = process.env.GLM_API_KEY
+    try {
+      process.env.GLM_API_KEY = "test-key"
+      process.env.BACKUP_LLM_URL = "https://backup.example/v1"
+      process.env.BACKUP_MODEL = "gpt-backup"
+      process.env.LOCAL_LLM_URL = "http://127.0.0.1:8080"
+      const resolved = resolveModel()
+      assert.ok(!resolved.localOnly)
+      assert.ok(resolved.backupModel && resolved.backupLabel?.includes("无视觉"), "备用云端已注册且明示降级")
+      assert.ok(resolved.localModel, "本地兜底已注册")
+      delete process.env.GLM_API_KEY
+      const localOnly = resolveModel()
+      assert.ok(localOnly.localOnly && localOnly.label.startsWith("local/"), "无云端 key 时进 M3 纯本地模式")
+      const chatPrompt = buildChatOnlyPrompt(loadPersonas().personas.assistant)
+      assert.ok(chatPrompt.includes("离线闲聊") && chatPrompt.includes("没有任何设备控制能力"), "M3 闲聊提示词明示铁律")
+      ok("备用切换链（glm→backup→local）可解析；M3 无 key 时纯本地+闲聊提示词")
+    } finally {
+      if (hadGlm) process.env.GLM_API_KEY = hadGlm
+      else delete process.env.GLM_API_KEY
+      delete process.env.BACKUP_LLM_URL
+      delete process.env.BACKUP_MODEL
+      delete process.env.LOCAL_LLM_URL
+    }
+  }
+
   console.log("== 4. mock 躯体 IPC ==")
   const mock = await startMockBody({ port: 0 })
   try {
@@ -86,6 +172,67 @@ async function main(): Promise<void> {
     const learned = await body.rpc<{ slug: string }>("skill.learn", { goal: "下单奶茶", appPackage: "com.example.shop" })
     assert.ok(learned.slug.startsWith("skill-com.example.shop-"))
     ok("skill.learn 生成 slug")
+
+    // BD-07.3：SKILL_STALE 失配上下文透传（续走提示而非干巴巴"改为现场规划"）
+    {
+      const tools = buildTools(body, loadPersonas().personas)
+      const skillRun = tools.find((t) => t.name === "skill.run")!
+      await assert.rejects(
+        skillRun.execute("s1", { name: "stale-skill" }),
+        (e: unknown) =>
+          e instanceof Error && e.message.includes("回放失配") && e.message.includes("从失配处现场规划") && e.message.includes("复活为 candidate"),
+      )
+      ok("skill.run SKILL_STALE 带续走上下文（recovery 提示）")
+    }
+
+    // TC-08：证据驳回计数（×3 升级建议转人工；好证据通过）
+    {
+      const tmp2 = await mkdtemp(join(tmpdir(), "sa-runstate2-"))
+      process.env.SUPER_AGENT_STATE_DIR = tmp2
+      try {
+        const tools = buildTools(body, loadPersonas().personas)
+        const finish = tools.find((t) => t.name === "task.finish")!
+        beginRun("点一杯奶茶")
+        // "已送达"不在任何 mock 屏 → 存在性驳回；前 2 次无升级提示
+        for (let i = 1; i <= 2; i++) {
+          await assert.rejects(
+            finish.execute(`f${i}`, { summary: "完成", evidence: "已送达" }),
+            (e: unknown) => e instanceof Error && e.message.includes("证据核验失败") && !e.message.includes("转人工"),
+          )
+        }
+        // 第 3 次：升级建议 hitl.handoff
+        await assert.rejects(
+          finish.execute("f3", { summary: "完成", evidence: "已送达" }),
+          (e: unknown) => e instanceof Error && e.message.includes("连续 3 次证据驳回") && e.message.includes("hitl.handoff"),
+        )
+        // Kestrel 语义：每次驳回都留痕 resultKind=finish_rejected（供断点续跑/审计）
+        assert.equal(getRun().trace.filter((s) => s.resultKind === "finish_rejected").length, 3)
+        // 新 run（计数随 beginRun 清零）：第 5 次 perceive 落在"搜索/立即购买"屏 → 存在性通过
+        beginRun("再买一单")
+        const done = (await finish.execute("f4", { summary: "完成", evidence: "立即购买" })) as {
+          details: { evidenceVerified: boolean }
+        }
+        assert.equal(done.details.evidenceVerified, true)
+        resetRun()
+
+        // BR-04.3 相关性软门：注入判 FAIL 的审查员 → 有效证据也被驳；审查异常 → fail-open 放行
+        // （注意 mock perceive 按 4 屏轮换：r1 落 screen2、r2 落 screen3，"去结算"两屏均可见）
+        beginRun("点一杯奶茶")
+        const toolsFail = buildTools(body, loadPersonas().personas, () => Promise.resolve({ ok: false, reason: "证据是无关弹窗" }))
+        const finishRel = toolsFail.find((t) => t.name === "task.finish")!
+        await assert.rejects(
+          finishRel.execute("r1", { summary: "完成", evidence: "去结算" }),
+          (e: unknown) => e instanceof Error && e.message.includes("与任务目标不相关") && e.message.includes("无关弹窗"),
+        )
+        const toolsOpen = buildTools(body, loadPersonas().personas, () => Promise.reject(new Error("审查服务不可达")))
+        const finishOpen = toolsOpen.find((t) => t.name === "task.finish")!
+        await assert.doesNotReject(finishOpen.execute("r2", { summary: "完成", evidence: "去结算" }))
+        resetRun()
+      } finally {
+        delete process.env.SUPER_AGENT_STATE_DIR
+      }
+      ok("task.finish 证据驳回 ×3 升级转人工；相关性软门 FAIL 可驳/异常放行")
+    }
 
     const ev1 = await body.events(0)
     assert.ok(ev1.length >= 1)
