@@ -2,6 +2,10 @@ import assert from "node:assert/strict"
 import { startMockBody } from "./mock-body.ts"
 import { BodyClient, BodyRpcError, BodyUnavailableError } from "../src/ipc/client.ts"
 import { verifyEvidence } from "../src/guards/finish.ts"
+import { ReActGuard } from "../src/guards/reactGuard.ts"
+import { afterToolCall, beforeToolCall, resetGuard } from "../src/guards/index.ts"
+import type { BeforeToolCallContext } from "@earendil-works/pi-agent-core"
+import type { AfterToolCallContext } from "@earendil-works/pi-agent-core"
 import type { ScreenResult } from "../src/ipc/types.ts"
 
 let passed = 0
@@ -28,6 +32,34 @@ async function main(): Promise<void> {
 
   // AD-05 R3：技能检索（TF-IDF）已下沉 body skill.search RPC，brain 不再持有索引。
   // body 侧检索由 SkillStoreTest 覆盖。
+
+  console.log("== 5. ReAct 止损（H1 回归） ==")
+  {
+    const guard = new ReActGuard()
+    for (let i = 0; i < 31; i++) guard.record("control.tap", { x: i * 100, y: 0 }, `s${i}`, `s${i + 1}`)
+    assert.equal(guard.shouldAbort(), "max_steps")
+    guard.reset()
+    assert.equal(guard.totalSteps, 0)
+    assert.equal(guard.shouldAbort(), null)
+    ok("max_steps 按 run 计：reset 全量清空，不跨任务累计")
+  }
+  {
+    const afterCtx = (tool: string, args: Record<string, unknown>) =>
+      ({ toolCall: { name: tool }, args, result: { content: [], details: { located: true } }, isError: false }) as unknown as AfterToolCallContext
+    const beforeCtx = (tool: string) => ({ toolCall: { name: tool } }) as unknown as BeforeToolCallContext
+    resetGuard()
+    for (let i = 0; i < 31; i++) {
+      await afterToolCall(afterCtx("control.tap", { x: i * 100, y: i * 100 }))
+    }
+    const blocked = await beforeToolCall(beforeCtx("control.tap"))
+    assert.ok(blocked !== undefined && blocked.block === true)
+    assert.equal(await beforeToolCall(beforeCtx("perceive.screen")), undefined)
+    assert.equal(await beforeToolCall(beforeCtx("task.finish")), undefined)
+    assert.equal(await beforeToolCall(beforeCtx("hitl.handoff")), undefined)
+    resetGuard()
+    assert.equal(await beforeToolCall(beforeCtx("control.tap")), undefined)
+    ok("止损拦动作工具、豁免感知/收尾/转人工通道；reset 后恢复")
+  }
 
   console.log("== 4. mock 躯体 IPC ==")
   const mock = await startMockBody({ port: 0 })

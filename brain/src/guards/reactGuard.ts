@@ -58,17 +58,16 @@ export class ReActGuard {
     this.consecutiveNoProgress = sigBefore === sigAfter ? this.consecutiveNoProgress + 1 : 0
   }
 
-  /** 记录恢复动作（只增全局步数，不进卡死/绕圈检测）。 */
-  recordRecovery(): void {
-    this.totalRecorded++
-  }
-
-  /** 清空卡死/振荡/无进展状态（人工协助后），不清 totalRecorded（MaxSteps 全局上限）。 */
+  /**
+   * 全量清空（每个新 run 开始时调用）。步数预算按 run 计（Kestrel 语义）：
+   * maxSteps 是单任务止损，不是进程终身配额——跨任务累计会把长驻 brain 永久拦死。
+   */
   reset(): void {
     this.steps.length = 0
     this.sigs.length = 0
     this.coarseKeys.length = 0
     this.consecutiveNoProgress = 0
+    this.totalRecorded = 0
   }
 
   shouldAbort(): AbortReason | null {

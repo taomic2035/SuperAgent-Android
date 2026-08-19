@@ -104,45 +104,52 @@ class SpeechEngine(private val context: Context) {
     /** 播报文本。refAudio/refText/instruct 走 ZipVoice 克隆（P0：Kokoro 多音色）。线程安全：串行播放。 */
     fun say(text: String, voice: VoiceConfig?): SayResult {
         val wake = wakeLock()
-        synchronized(this) {
-            val t = tts() ?: throw SpeechUnavailable("TTS 模型未安装（scripts/fetch-models）")
-            interrupt()
-            playing.set(true)
-        val sampleRate = t.sampleRate()
-        val track = AudioTrack.Builder()
-            .setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_ASSISTANT)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                    .build(),
-            )
-            .setAudioFormat(
-                android.media.AudioFormat.Builder()
-                    .setSampleRate(sampleRate)
-                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                    .build(),
-            )
-            .setBufferSizeInBytes(maxOf(sampleRate * 2, 4096))
-            .build()
-        activeTrack = track
-        track.play()
-        val sid = voice?.speakerId ?: 0
-        t.generateWithCallback(text, sid, voice?.speed ?: 1.0f) { samples ->
-            if (!playing.get()) {
-                return@generateWithCallback 1
+        try {
+            synchronized(this) {
+                val t = tts() ?: throw SpeechUnavailable("TTS 模型未安装（scripts/fetch-models）")
+                interrupt()
+                playing.set(true)
+                val sampleRate = t.sampleRate()
+                val track = AudioTrack.Builder()
+                    .setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_ASSISTANT)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                            .build(),
+                    )
+                    .setAudioFormat(
+                        android.media.AudioFormat.Builder()
+                            .setSampleRate(sampleRate)
+                            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                            .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                            .build(),
+                    )
+                    .setBufferSizeInBytes(maxOf(sampleRate * 2, 4096))
+                    .build()
+                activeTrack = track
+                try {
+                    track.play()
+                    val sid = voice?.speakerId ?: 0
+                    t.generateWithCallback(text, sid, voice?.speed ?: 1.0f) { samples ->
+                        if (!playing.get()) {
+                            return@generateWithCallback 1
+                        }
+                        val pcm = ShortArray(samples.size)
+                        for (i in samples.indices) pcm[i] = (samples[i] * 32767).toInt().toShort()
+                        track.write(pcm, 0, pcm.size)
+                        1
+                    }
+                } finally {
+                    runCatching { track.stop() }
+                    runCatching { track.release() }
+                    if (activeTrack === track) activeTrack = null
+                    playing.set(false)
+                }
+                return SayResult("speaker")
             }
-            val pcm = ShortArray(samples.size)
-            for (i in samples.indices) pcm[i] = (samples[i] * 32767).toInt().toShort()
-            track.write(pcm, 0, pcm.size)
-            1
-        }
-        track.stop()
-        track.release()
-        activeTrack = null
-        playing.set(false)
-        wake?.release()
-        return SayResult("speaker")
+        } finally {
+            // 合成/播放抛异常也必须释放，wakelock 虽有 60s 自释放兜底但不该占着
+            wake?.release()
         }
     }
 

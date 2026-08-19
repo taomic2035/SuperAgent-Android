@@ -122,7 +122,7 @@ async function runVoiceLoop(body: BodyClient, agent: Agent): Promise<void> {
 
 async function voiceTurn(body: BodyClient, agent: Agent): Promise<void> {
   try {
-    const asr = await body.rpc<AsrResult>("speech.asr", {})
+    const asr = await body.rpc<AsrResult>("speech.asr", {}, undefined, 75_000)
     if (!asr.text.trim()) return
     console.log(`你(语音)> ${asr.text}`)
     beginRun(asr.text)

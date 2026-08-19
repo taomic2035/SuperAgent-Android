@@ -10,6 +10,7 @@ import android.content.IntentFilter
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.RemoteInput
+import androidx.core.content.ContextCompat
 import com.superagent.body.core.events.EventBus
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.withTimeoutOrNull
@@ -80,7 +81,8 @@ class Hitl(private val context: Context, private val events: EventBus) {
         val filter = IntentFilter().apply {
             addAction(ACTION_CONFIRM); addAction(ACTION_ANSWER); addAction(ACTION_HANDOFF)
         }
-        context.registerReceiver(receiver, filter)
+        // targetSdk 34+ 在 Android 14+ 必须声明导出标志；通知动作均为本应用自发广播 → NOT_EXPORTED
+        ContextCompat.registerReceiver(context, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
     }
 
     suspend fun confirm(prompt: String): Boolean {
@@ -161,7 +163,7 @@ class Hitl(private val context: Context, private val events: EventBus) {
     private fun postAskNotification(id: Long, prompt: String) {
         val replyIntent = Intent(ACTION_ANSWER).setPackage(context.packageName).putExtra("id", id)
         val remoteInput = RemoteInput.Builder(KEY_REPLY).setLabel("回复…").build()
-        val replyAction = NotificationCompat.Action.Builder(0, "回复", pi(replyIntent))
+        val replyAction = NotificationCompat.Action.Builder(0, "回复", pi(replyIntent, mutable = true))
             .addRemoteInput(remoteInput).build()
         val builder = NotificationCompat.Builder(context, CHANNEL)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
@@ -213,11 +215,20 @@ class Hitl(private val context: Context, private val events: EventBus) {
         events.emit("hitl", buildJsonObject { put("id", id); put("result", value) })
     }
 
-    private fun pi(intent: Intent): PendingIntent =
-        PendingIntent.getBroadcast(
+    /**
+     * RemoteInput 需要系统能把回复结果写回 PendingIntent → Android 12+ 必须 FLAG_MUTABLE
+     * （IMMUTABLE 的回复 PendingIntent 在 S+ 上 getResultsFromIntent 恒 null，回答变空串）。
+     */
+    private fun pi(intent: Intent, mutable: Boolean = false): PendingIntent {
+        val mutability = when {
+            mutable && Build.VERSION.SDK_INT >= 31 -> PendingIntent.FLAG_MUTABLE
+            else -> PendingIntent.FLAG_IMMUTABLE
+        }
+        return PendingIntent.getBroadcast(
             context, intent.hashCode(), intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            PendingIntent.FLAG_UPDATE_CURRENT or mutability,
         )
+    }
 
     companion object {
         private const val CHANNEL = "super-agent-hitl"
@@ -225,6 +236,8 @@ class Hitl(private val context: Context, private val events: EventBus) {
         private const val ACTION_ANSWER = "com.superagent.body.HITL_ANSWER"
         private const val ACTION_HANDOFF = "com.superagent.body.HITL_HANDOFF"
         private const val KEY_REPLY = "super_agent_reply"
-        private const val HITL_TIMEOUT_MS = 60_000L
+
+        /** HITL 等待用户的上限。BodyServer 对应 handler 的 RPC 超时必须 > 此值。 */
+        const val HITL_TIMEOUT_MS = 60_000L
     }
 }

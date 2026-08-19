@@ -46,7 +46,7 @@ class BodyCore(
     private val voiceLoop = com.superagent.body.core.voice.VoiceLoop(context, events)
     private val hardware = HardwareService(context)
     private val hitl = Hitl(context, events)
-    private val skills = SkillStore(File(context.filesDir, "skills"), perceiver, selector, controller, events)
+    private val skills = SkillStore(File(context.filesDir, "skills"), perceiver, selector, controller, events, sensitiveSession)
     private val server = BodyServer(events)
     private val started = AtomicBoolean(false)
 
@@ -145,7 +145,7 @@ class BodyCore(
             ok(req, controller.launch(pkg))
         }
 
-        server.rpc("speech.asr") { req ->
+        server.rpc("speech.asr", SPEECH_RPC_TIMEOUT_MS) { req ->
             runCatching { speech.recognize() }
                 .fold(
                     { ok(req, it) },
@@ -181,7 +181,7 @@ class BodyCore(
             emptyOk(req)
         }
 
-        server.rpc("speech.voiceprintEnroll") { req ->
+        server.rpc("speech.voiceprintEnroll", SPEECH_RPC_TIMEOUT_MS) { req ->
             val name = params(req).string("name") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 name")
             runCatching { speech.enroll(name) }
                 .fold(
@@ -190,7 +190,7 @@ class BodyCore(
                 )
         }
 
-        server.rpc("speech.voiceprintIdentify") { req ->
+        server.rpc("speech.voiceprintIdentify", SPEECH_RPC_TIMEOUT_MS) { req ->
             runCatching { speech.identify() }
                 .fold(
                     { ok(req, it) },
@@ -233,7 +233,7 @@ class BodyCore(
             ok(req, skills.search(query))
         }
 
-        server.rpc("skill.run") { req ->
+        server.rpc("skill.run", SKILL_RUN_RPC_TIMEOUT_MS) { req ->
             val name = params(req).string("name") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 name")
             runCatching { skills.run(name) }
                 .fold(
@@ -278,17 +278,22 @@ class BodyCore(
                 )
         }
 
-        server.rpc("hitl.confirm") { req ->
+        server.rpc("hitl.confirm", HITL_RPC_TIMEOUT_MS) { req ->
             val prompt = params(req).string("prompt") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 prompt")
-            ok(req, com.superagent.common.HitlConfirmResult(hitl.confirm(prompt)))
+            // action=被拦截动作的确切文字（如「发送」）。用户同意后按标签放行一次，
+            // 否则敏感会话内 selectOption 重试会被 needsExtraConfirm 永久拦截（死锁）。
+            val action = params(req).string("action")
+            val approved = hitl.confirm(prompt)
+            if (approved && action != null) sensitiveSession.approve(action)
+            ok(req, com.superagent.common.HitlConfirmResult(approved))
         }
 
-        server.rpc("hitl.ask") { req ->
+        server.rpc("hitl.ask", HITL_RPC_TIMEOUT_MS) { req ->
             val prompt = params(req).string("prompt") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 prompt")
             ok(req, com.superagent.common.HitlAskResult(hitl.ask(prompt)))
         }
 
-        server.rpc("hitl.handoff") { req ->
+        server.rpc("hitl.handoff", HITL_RPC_TIMEOUT_MS) { req ->
             val reason = params(req).string("reason") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 reason")
             ok(req, com.superagent.common.HitlHandoffResult(hitl.handoff(reason)))
         }
@@ -324,5 +329,14 @@ class BodyCore(
 
     companion object {
         private const val TAG = "BodyCore"
+
+        /** RPC 等待必须 > handler 内部等待上限：HITL 等用户 60s，留事件/清理余量。 */
+        private const val HITL_RPC_TIMEOUT_MS = Hitl.HITL_TIMEOUT_MS + 15_000L
+
+        /** 录音最长 15s/段（声纹注册 3 段）+ 首次加载 sherpa 模型。 */
+        private const val SPEECH_RPC_TIMEOUT_MS = 60_000L
+
+        /** 技能回放：每步感知+动作 ~2s，步数受 brain 侧 maxSteps=30 约束。 */
+        private const val SKILL_RUN_RPC_TIMEOUT_MS = 120_000L
     }
 }

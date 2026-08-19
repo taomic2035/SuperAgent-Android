@@ -30,13 +30,21 @@ class BodyServer(
 ) : NanoHTTPD(BodyContext.settings.host, BodyContext.settings.port) {
 
     private val handlers = ConcurrentHashMap<String, Handler>()
+    private val handlerTimeouts = ConcurrentHashMap<String, Long>()
     private val idempotentResults = ConcurrentHashMap<String, RpcResponse>()
+    private val idempotentOrder = java.util.concurrent.ConcurrentLinkedQueue<String>()
 
     fun on(method: String, handler: Handler) {
         handlers[method] = handler
     }
 
     fun rpc(method: String, handler: Handler) = on(method, handler)
+
+    /** 注册长耗时方法（HITL 等待用户、录音、技能回放）。超时必须 > handler 内部等待上限，否则用户响应到达前 RPC 已被判死。 */
+    fun rpc(method: String, timeoutMs: Long, handler: Handler) {
+        handlers[method] = handler
+        handlerTimeouts[method] = timeoutMs
+    }
 
     override fun serve(session: IHTTPSession): Response {
         return try {
@@ -95,11 +103,11 @@ class BodyServer(
         val handler = handlers[request.method]
             ?: return jsonResponse(RpcResponse.failure(request.id, "UNKNOWN_METHOD", "未知方法: ${request.method}"))
         val response = runBlocking(handler, request)
-        if (key != null && response.ok) {
-            idempotentResults[key] = response
-            if (idempotentResults.size > 512) {
-                val oldest = idempotentResults.keys.firstOrNull()
-                if (oldest != null) idempotentResults.remove(oldest)
+        if (key != null && response.ok && idempotentResults.putIfAbsent(key, response) == null) {
+            idempotentOrder.add(key)
+            while (idempotentOrder.size > MAX_IDEMPOTENT_ENTRIES) {
+                val oldest = idempotentOrder.poll() ?: break
+                idempotentResults.remove(oldest)
             }
         }
         return jsonResponse(response)
@@ -117,7 +125,8 @@ class BodyServer(
                 latch.countDown()
             }
         }
-        latch.await(30, java.util.concurrent.TimeUnit.SECONDS)
+        val timeoutMs = handlerTimeouts[request.method] ?: DEFAULT_HANDLER_TIMEOUT_MS
+        latch.await(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
         return result ?: RpcResponse.failure(request.id, "TIMEOUT", "handler 超时")
     }
 
@@ -153,6 +162,11 @@ class BodyServer(
 
     override fun start() {
         super.start(NanoHTTPD.SOCKET_READ_TIMEOUT, false)
+    }
+
+    companion object {
+        const val DEFAULT_HANDLER_TIMEOUT_MS = 30_000L
+        private const val MAX_IDEMPOTENT_ENTRIES = 512
     }
 
     @Throws(IOException::class)

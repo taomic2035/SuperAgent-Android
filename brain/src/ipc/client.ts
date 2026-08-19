@@ -24,12 +24,13 @@ export class BodyClient {
   constructor(
     private readonly baseUrl: string,
     private readonly token: string,
-    private readonly timeoutMs = 15_000,
+    /** 默认 35s > body 默认 handler 超时 30s（BodyServer.DEFAULT_HANDLER_TIMEOUT_MS）。 */
+    private readonly timeoutMs = 35_000,
   ) {}
 
-  private async rawRpc(request: RpcRequest): Promise<RpcResponse> {
+  private async rawRpc(request: RpcRequest, timeoutMs: number): Promise<RpcResponse> {
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs)
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
     try {
       const res = await fetch(`${this.baseUrl}/rpc`, {
         method: "POST",
@@ -60,8 +61,12 @@ export class BodyClient {
     }
   }
 
-  async rpc<T>(method: string, params: unknown, idempotencyKey?: string): Promise<T> {
-    const response = await this.rawRpc({ id: nextId++, method, params, idempotencyKey })
+  /**
+   * @param timeoutMs 客户端超时必须 > body 侧对应 handler 的 RPC 超时，
+   * 否则 body 还在等（如 HITL 等用户）brain 已判死。长耗时调用按工具显式传大值。
+   */
+  async rpc<T>(method: string, params: unknown, idempotencyKey?: string, timeoutMs = this.timeoutMs): Promise<T> {
+    const response = await this.rawRpc({ id: nextId++, method, params, idempotencyKey }, timeoutMs)
     if (!response.ok) {
       throw new BodyRpcError(response.error.code, response.error.message, response.error.reason)
     }

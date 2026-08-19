@@ -40,7 +40,10 @@ class VoiceLoop(private val context: Context, private val events: EventBus) {
 
     init {
         val filter = IntentFilter().apply { addAction(ACTION_TRIGGER); addAction(ACTION_STATE) }
-        context.registerReceiver(receiver, filter)
+        // targetSdk 34+ 在 Android 14+ 必须声明导出标志；通知栏按钮为本应用自发广播 → NOT_EXPORTED
+        androidx.core.content.ContextCompat.registerReceiver(
+            context, receiver, filter, androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
     }
 
     fun setState(newState: State) {

@@ -6,6 +6,15 @@
 
 ### 已完成
 
+**GLM-5.3 审计修复（5 问题 + 清理）**（2026-08-19）
+
+- **H1 ReAct 止损跨任务失效**：`reset()` 全量清空（含 `totalRecorded`），步数预算按 run 计（Kestrel 语义）——原实现 30 步进程终身配额，长驻 brain 跑几个任务后被永久 `max_steps` 拦死；另增止损豁免通道（perceive.screen/task.finish/hitl.*/speech.say 不拦），否则止损提示让模型"重新感知/声明失败"而这些调用本身被拦，死锁出不去。smoke 新增 2 项回归用例
+- **H3 hitl.ask 回复失效（Android 12+）**：RemoteInput 的 PendingIntent 必须 `FLAG_MUTABLE`（S+ 上 IMMUTABLE 回复 PI 的 `getResultsFromIntent` 恒 null，回答变空串）；仅 ask 的回复 PI 放开 mutable，其余保持 IMMUTABLE
+- **H2 三层超时对齐**：HITL 等待 60s < BodyServer handler 75s < brain 客户端 90s（原先 30s/15s，用户 30~60s 点确认 brain 已判死；声纹注册 3 段录音必撞 30s 线）；BodyServer 支持按方法注册超时（语音 60s / skill.run 120s），brain rpc 增可选 timeoutMs（默认 35s）；幂等缓存改 FIFO 淘汰（原按 ConcurrentHashMap 随机序淘汰）
+- **M1 skill.run 回放绕过敏感会话确认**：SkillStore 接入 SensitiveSessionTracker，敏感 App 内回放遇确认类动作词（发送/删除/转账…）→ SensitiveHandoff 停手转人工，与 control.* RPC 路径同闸；配套 `hitl.confirm` 增可选 `action` 参数（用户同意后按确切标签放行一次、2 分钟时效、敏感会话切换失效），修复敏感会话内"确认后重试仍被拦"的死锁
+- **M2 Android 14+ 启动崩**：Hitl/VoiceLoop 动态注册接收器补 `RECEIVER_NOT_EXPORTED`（targetSdk 35 两参重载在 Android 14+ 抛 SecurityException）
+- 清理：SpeechEngine.say 异常路径 wakelock/AudioTrack 释放（try/finally）；brain control.* 失败报错透传 body note（"无障碍服务未连接"不再误报"未命中元素"）；删 guards 死代码（inSensitiveSession 镜像、recordRecovery）
+
 **Termux 原型打通 + GLM 端到端验证**（2026-08-19）
 
 - Termux（v0.118.3）装机：node v24.18.0 + npm 11.19.0；pi-agent-core + pi-ai + pi-telemetry 安装成功（纯 JS，arm64 兼容）

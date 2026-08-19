@@ -25,6 +25,11 @@ function idem(tool: string, toolCallId: string): string {
   return `${tool}-${toolCallId}`
 }
 
+/** 客户端超时必须 > body 侧对应 handler 超时（BodyCore/BodyServer 常量），否则 body 还在等 brain 已判死。 */
+const HITL_RPC_TIMEOUT_MS = 90_000
+const SPEECH_RPC_TIMEOUT_MS = 75_000
+const SKILL_RUN_RPC_TIMEOUT_MS = 150_000
+
 export function buildTools(body: BodyClient, personas: Record<string, Persona>): AgentTool<any>[] {
   const personaMap = new Map(Object.entries(personas))
   const say = (personaName: string | undefined) => personaMap.get(personaName ?? "")?.voice ?? personas.assistant.voice
@@ -53,7 +58,7 @@ export function buildTools(body: BodyClient, personas: Record<string, Persona>):
       }),
       execute: async (toolCallId, params: any) => {
         const result = await body.rpc<ActionResult>("control.tap", params, idem("control.tap", toolCallId))
-        if (!result.located) throw new Error("点击未命中任何可交互元素，请重新感知屏幕")
+        if (!result.located) throw new Error(result.note ?? "点击未命中任何可交互元素，请重新感知屏幕")
         return { content: [{ type: "text", text: `已点击 (${params.x}, ${params.y})` }], details: result }
       },
     },
@@ -68,7 +73,7 @@ export function buildTools(body: BodyClient, personas: Record<string, Persona>):
       }),
       execute: async (toolCallId, params: any) => {
         const result = await body.rpc<ActionResult>("control.longPress", params, idem("control.longPress", toolCallId))
-        if (!result.located) throw new Error("长按未命中，请重新感知")
+        if (!result.located) throw new Error(result.note ?? "长按未命中，请重新感知")
         return { content: [{ type: "text", text: "长按完成" }], details: result }
       },
     },
@@ -97,7 +102,7 @@ export function buildTools(body: BodyClient, personas: Record<string, Persona>):
       }),
       execute: async (toolCallId, params: any) => {
         const result = await body.rpc<ActionResult>("control.typeText", params, idem("control.typeText", toolCallId))
-        if (!result.located) throw new Error("没有可用的输入框")
+        if (!result.located) throw new Error(result.note ?? "没有可用的输入框")
         return { content: [{ type: "text", text: "输入完成" }], details: result }
       },
     },
@@ -111,7 +116,7 @@ export function buildTools(body: BodyClient, personas: Record<string, Persona>):
       }),
       execute: async (toolCallId, params: any) => {
         const result = await body.rpc<ActionResult>("control.selectOption", params, idem("control.selectOption", toolCallId))
-        if (!result.located) throw new Error(`未找到可见文字「${params.label}」`)
+        if (!result.located) throw new Error(result.note ?? `未找到可见文字「${params.label}」`)
         return { content: [{ type: "text", text: `已点选「${params.label}」` }], details: result }
       },
     },
@@ -125,7 +130,7 @@ export function buildTools(body: BodyClient, personas: Record<string, Persona>):
       }),
       execute: async (toolCallId, params: any) => {
         const result = await body.rpc<ActionResult>("control.selectSpec", params, idem("control.selectSpec", toolCallId))
-        if (!result.located) throw new Error(`规格「${params.label}」点选未生效（选中态校验失败）`)
+        if (!result.located) throw new Error(result.note ?? `规格「${params.label}」点选未生效（选中态校验失败）`)
         return { content: [{ type: "text", text: `已选中规格「${params.label}」` }], details: result }
       },
     },
@@ -158,7 +163,7 @@ export function buildTools(body: BodyClient, personas: Record<string, Persona>):
       }),
       execute: async (toolCallId, params: any) => {
         const result = await body.rpc<ActionResult>("control.launch", params, idem("control.launch", toolCallId))
-        if (!result.located) throw new Error(`启动 ${params.pkg} 失败`)
+        if (!result.located) throw new Error(result.note ?? `启动 ${params.pkg} 失败`)
         return { content: [{ type: "text", text: `已启动 ${params.pkg}` }], details: result }
       },
     },
@@ -168,7 +173,7 @@ export function buildTools(body: BodyClient, personas: Record<string, Persona>):
       description: "开始录音并识别用户语音（静音 1.2s 自动结束），返回识别文本。",
       parameters: Type.Object({}),
       execute: async () => {
-        const result = await body.rpc<AsrResult>("speech.asr", {})
+        const result = await body.rpc<AsrResult>("speech.asr", {}, undefined, SPEECH_RPC_TIMEOUT_MS)
         return { content: [{ type: "text", text: `识别结果：${result.text}` }], details: result }
       },
     },
@@ -204,7 +209,7 @@ export function buildTools(body: BodyClient, personas: Record<string, Persona>):
         name: Type.String({ description: "说话人名字" }),
       }),
       execute: async (_id, params: any) => {
-        const result = await body.rpc<VoiceprintEnrollResult>("speech.voiceprintEnroll", params)
+        const result = await body.rpc<VoiceprintEnrollResult>("speech.voiceprintEnroll", params, undefined, SPEECH_RPC_TIMEOUT_MS)
         return { content: [{ type: "text", text: `已注册声纹 ${result.speaker}（${result.samples} 条样本）` }], details: result }
       },
     },
@@ -214,7 +219,7 @@ export function buildTools(body: BodyClient, personas: Record<string, Persona>):
       description: "录制短语音并判断说话人身份。",
       parameters: Type.Object({}),
       execute: async () => {
-        const result = await body.rpc<VoiceprintIdentifyResult>("speech.voiceprintIdentify", {})
+        const result = await body.rpc<VoiceprintIdentifyResult>("speech.voiceprintIdentify", {}, undefined, SPEECH_RPC_TIMEOUT_MS)
         return { content: [{ type: "text", text: result.speaker ? `说话人：${result.speaker}` : "无法识别说话人" }], details: result }
       },
     },
@@ -284,7 +289,7 @@ export function buildTools(body: BodyClient, personas: Record<string, Persona>):
         args: Type.Optional(Type.Record(Type.String(), Type.String())),
       }),
       execute: async (toolCallId, params: any) => {
-        const result = await body.rpc<SkillRunResult>("skill.run", params, idem("skill.run", toolCallId))
+        const result = await body.rpc<SkillRunResult>("skill.run", params, idem("skill.run", toolCallId), SKILL_RUN_RPC_TIMEOUT_MS)
         if (result.result === "sensitive_handoff") {
           return { content: [{ type: "text", text: `技能 ${params.name} 在 ${result.completedSteps} 步后遇敏感步骤，已停手转人工接管。` }], details: { result } }
         }
@@ -310,12 +315,15 @@ export function buildTools(body: BodyClient, personas: Record<string, Persona>):
     {
       name: "hitl.confirm",
       label: "请求确认",
-      description: "敏感操作前请求用户确认。approved=false 表示用户拒绝。",
+      description:
+        "敏感操作前请求用户确认。approved=false 表示用户拒绝。" +
+        "当某动作被 COMMIT_BOUNDARY/sensitive_session 拒绝时：确认时必须把该动作的确切文字传入 action，用户同意后即可重试该动作。",
       parameters: Type.Object({
         prompt: Type.String({ description: "向用户展示的确认文案" }),
+        action: Type.Optional(Type.String({ description: "被拦截动作的确切文字（用于用户同意后放行重试）" })),
       }),
       execute: async (_id, params: any) => {
-        const result = await body.rpc<HitlConfirmResult>("hitl.confirm", params)
+        const result = await body.rpc<HitlConfirmResult>("hitl.confirm", params, undefined, HITL_RPC_TIMEOUT_MS)
         return { content: [{ type: "text", text: result.approved ? "用户已确认" : "用户拒绝" }], details: result }
       },
     },
@@ -327,7 +335,7 @@ export function buildTools(body: BodyClient, personas: Record<string, Persona>):
         prompt: Type.String(),
       }),
       execute: async (_id, params: any) => {
-        const result = await body.rpc<HitlAskResult>("hitl.ask", params)
+        const result = await body.rpc<HitlAskResult>("hitl.ask", params, undefined, HITL_RPC_TIMEOUT_MS)
         return { content: [{ type: "text", text: `用户回答：${result.answer}` }], details: result }
       },
     },
@@ -339,7 +347,7 @@ export function buildTools(body: BodyClient, personas: Record<string, Persona>):
         reason: Type.String(),
       }),
       execute: async (_id, params: any) => {
-        const result = await body.rpc<HitlHandoffResult>("hitl.handoff", params)
+        const result = await body.rpc<HitlHandoffResult>("hitl.handoff", params, undefined, HITL_RPC_TIMEOUT_MS)
         return { content: [{ type: "text", text: `已转人工：${params.reason}` }], details: result }
       },
     },

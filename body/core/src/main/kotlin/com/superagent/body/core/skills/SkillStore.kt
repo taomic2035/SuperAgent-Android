@@ -57,6 +57,7 @@ class SkillStore(
     private val selector: OptionSelector,
     private val controller: Controller,
     private val events: EventBus,
+    private val sensitive: com.superagent.body.core.security.SensitiveSessionTracker,
 ) {
     private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
@@ -105,6 +106,12 @@ class SkillStore(
         for ((index, step) in skill.steps.withIndex()) {
             val label = step.args["label"]
             if (label != null && CommitBoundaryGuard.isCommitBoundary(label)) {
+                recordRun(skill, stale = false)
+                return SkillRunOutcome.SensitiveHandoff(completed)
+            }
+            // 敏感会话内的确认类动作词（发送/删除/转账…）与 control.* RPC 路径同闸：
+            // 回放不得绕过 extra-confirm（无人在环的自动执行）→ 停手转人工。
+            if (label != null && sensitive.needsExtraConfirm(label)) {
                 recordRun(skill, stale = false)
                 return SkillRunOutcome.SensitiveHandoff(completed)
             }
