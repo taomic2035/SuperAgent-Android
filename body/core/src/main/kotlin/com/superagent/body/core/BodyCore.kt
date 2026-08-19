@@ -228,6 +228,10 @@ class BodyCore(
         server.rpc("hardware.headset") { req -> ok(req, hardware.headset()) }
 
         server.rpc("skill.list") { req -> ok(req, skills.list()) }
+        server.rpc("skill.search") { req ->
+            val query = params(req).string("query") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 query")
+            ok(req, skills.search(query))
+        }
 
         server.rpc("skill.run") { req ->
             val name = params(req).string("name") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 name")

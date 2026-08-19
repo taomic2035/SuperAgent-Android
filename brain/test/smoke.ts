@@ -1,12 +1,7 @@
 import assert from "node:assert/strict"
 import { startMockBody } from "./mock-body.ts"
 import { BodyClient, BodyRpcError, BodyUnavailableError } from "../src/ipc/client.ts"
-import {
-  isCommitBoundary, isSensitiveContext, isSensitiveSessionAction,
-  isSensitiveUrl, isSensitiveApp, getBoundaries,
-} from "../src/guards/commitBoundary.ts"
 import { verifyEvidence } from "../src/guards/finish.ts"
-import { SkillIndex } from "../src/skills/index.ts"
 import type { ScreenResult } from "../src/ipc/types.ts"
 
 let passed = 0
@@ -16,45 +11,8 @@ function ok(name: string): void {
 }
 
 async function main(): Promise<void> {
-  console.log("== 1. 提交边界 ==")
-  assert.equal(isCommitBoundary("立即支付"), true)
-  assert.equal(isCommitBoundary("提交订单"), true)
-  assert.equal(isCommitBoundary("收银台"), false)
-  assert.equal(isSensitiveContext("收银台"), true)
-  assert.equal(isCommitBoundary("加入购物车"), false)
-  assert.equal(isCommitBoundary("立即购买"), false)
-  assert.equal(isCommitBoundary("支付宝"), false)
-  ok("isCommitBoundary 命中/放行/误伤防护正确")
-
-  console.log("== 1b. 敏感会话/URL/App 检测 ==")
-  assert.equal(isSensitiveSessionAction("确认转账"), true)
-  assert.equal(isSensitiveSessionAction("提交申请"), true)
-  assert.equal(isSensitiveSessionAction("查看详情"), false)
-  assert.equal(isSensitiveSessionAction("浏览商品"), false)
-  ok("isSensitiveSessionAction 命中/放行正确")
-
-  assert.equal(isSensitiveUrl("https://shop.example.com/pay/confirm"), true)
-  assert.equal(isSensitiveUrl("https://shop.example.com/checkout"), true)
-  assert.equal(isSensitiveUrl("https://shop.example.com/product/123"), false)
-  ok("isSensitiveUrl 命中/放行正确")
-
-  assert.equal(isSensitiveApp("com.icbc"), true)
-  assert.equal(isSensitiveApp("com.icbc.iphone"), true)
-  assert.equal(isSensitiveApp("com.eg.android.AlipayGphone"), true)
-  assert.equal(isSensitiveApp("com.example.shop"), false)
-  assert.equal(isSensitiveApp("com.icbcx"), false)
-  ok("isSensitiveApp 命中/放行正确")
-
-  console.log("== 1c. 词表一致性 ==")
-  const b = getBoundaries()
-  assert.ok(b.commitPhrases.length >= 10, "commitPhrases 至少 10 条")
-  assert.ok(b.sensitiveNavPhrases.length >= 2, "sensitiveNavPhrases 至少 2 条")
-  assert.ok(b.sensitiveAppPrefixes.length >= 10, "sensitiveAppPrefixes 至少 10 条")
-  assert.ok(b.sensitiveUrlPatterns.length >= 4, "sensitiveUrlPatterns 至少 4 条")
-  assert.ok(b.sensitiveSessionActionVerbs.length >= 5, "sensitiveSessionActionVerbs 至少 5 条")
-  assert.ok(b.commitPhrases.includes("立即支付"))
-  assert.ok(b.sensitiveAppPrefixes.includes("com.icbc"))
-  ok("词表从 commit_boundaries.json 加载且字段完整")
+  // AD-01：提交边界/敏感会话/URL/App 词表判定已下沉 body（Guard.kt），
+  // brain 不再持有词表，相关测试由 body 侧 GuardTest.kt 覆盖。
 
   console.log("== 2. 证据核验 ==")
   const screenA: ScreenResult = {
@@ -68,21 +26,8 @@ async function main(): Promise<void> {
   assert.equal(verifyEvidence(screenA, undefined, "订").ok, false)
   ok("存在性/新颖性/过短校验正确")
 
-  console.log("== 3. 技能索引 TF-IDF ==")
-  const index = new SkillIndex()
-  index.rebuild([
-    { name: "order-milk-tea", description: "在示例商城下单奶茶", appPackage: "com.example.shop", tags: ["购物", "奶茶"] },
-    { name: "open-weather", description: "打开天气应用查看天气", appPackage: "com.example.weather", tags: ["天气"] },
-    { name: "set-alarm", description: "设置闹钟提醒", appPackage: "com.example.clock", tags: ["闹钟"] },
-  ])
-  const hits = index.retrieve("帮我点一杯奶茶")
-  assert.ok(hits.length > 0, "应命中至少一个技能")
-  assert.equal(hits[0].skill.name, "order-milk-tea")
-  const hitsWeather = index.retrieve("今天天气怎么样")
-  assert.equal(hitsWeather[0]?.skill.name, "open-weather")
-  const noHits = index.retrieve("背诵一首古诗")
-  assert.equal(noHits.length, 0)
-  ok("中文 2-gram TF-IDF 检索命中 top1 正确、无关查询为空")
+  // AD-05 R3：技能检索（TF-IDF）已下沉 body skill.search RPC，brain 不再持有索引。
+  // body 侧检索由 SkillStoreTest 覆盖。
 
   console.log("== 4. mock 躯体 IPC ==")
   const mock = await startMockBody({ port: 0 })

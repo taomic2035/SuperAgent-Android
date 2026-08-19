@@ -33,3 +33,6 @@ third/sherpa-onnx/jniLibs/**/*.so
 
 # speech models (fetch via scripts/fetch-models.sh, do not commit)
 body/app/src/main/assets/sherpa/
+
+.deveco/
+

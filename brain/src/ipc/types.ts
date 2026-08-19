@@ -96,6 +96,15 @@ export interface SkillListResult {
   skills: SkillMeta[]
 }
 
+export interface SkillSearchHit {
+  skill: SkillMeta
+  score: number
+}
+
+export interface SkillSearchResult {
+  hits: SkillSearchHit[]
+}
+
 export interface SkillRunResult {
   result: "success" | "stale" | "sensitive_handoff"
   completedSteps: number
@@ -123,4 +132,8 @@ export interface TraceStep {
   located: boolean
   signature?: string
   timestamp: number
+  /** 该步是否涉及敏感操作（HITL 确认过 / 支付红线停手），供技能学习识别 sensitive 步。 */
+  sensitive?: boolean
+  /** 结果分类：ok / not_located / handoff / finish_rejected / need_human / recover。 */
+  resultKind?: string
 }

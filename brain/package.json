@@ -13,8 +13,7 @@
     "smoke": "tsx test/smoke.ts",
     "live-glm": "tsx test/live-glm.ts",
     "typecheck": "tsc --noEmit",
-    "start": "tsx src/main.ts",
-    "sync-vocab": "node --input-type=module -e \"import{copyFileSync}from'node:fs';copyFileSync('../body/common/src/main/resources/commit_boundaries.json','./src/guards/commit_boundaries.json')\""
+    "start": "tsx src/main.ts"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "latest",

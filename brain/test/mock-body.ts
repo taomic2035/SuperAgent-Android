@@ -119,6 +119,15 @@ export function startMockBody(options: MockBodyOptions): Promise<{ port: number;
             { name: "open-weather", description: "打开天气应用", appPackage: "com.example.weather", tags: ["天气"] },
           ],
         }))
+      case "skill.search": {
+        const q = (params as { query?: string })?.query ?? ""
+        const all = [
+          { name: "order-milk-tea", description: "在示例商城下单奶茶", appPackage: "com.example.shop", tags: ["购物", "奶茶"] },
+          { name: "open-weather", description: "打开天气应用", appPackage: "com.example.weather", tags: ["天气"] },
+        ]
+        const hits = q.includes("奶茶") ? [{ skill: all[0], score: 0.8 }] : q.includes("天气") ? [{ skill: all[1], score: 0.7 }] : []
+        return void sendJson(res, 200, reply({ hits }))
+      }
       case "skill.run": {
         const p = params as { name?: string }
         if (p.name === "order-milk-tea") return void sendJson(res, 200, reply({ result: "success", completedSteps: 6 }))

@@ -1,6 +1,6 @@
 import { Type } from "typebox"
 import type { AgentTool } from "@earendil-works/pi-agent-core"
-import { getRun, setBaseline } from "../runState.ts"
+import { getRun, setBaseline, finishRun } from "../runState.ts"
 import { verifyEvidence } from "../guards/finish.ts"
 import type { BodyClient } from "../ipc/client.ts"
 import type {
@@ -370,6 +370,7 @@ export function buildTools(body: BodyClient, personas: Record<string, Persona>):
             learned = undefined
           }
         }
+        finishRun("success")
         return {
           content: [{ type: "text", text: `任务完成：${params.summary}` }],
           details: { evidenceVerified: true, traceSteps: locatedSteps.length, learned },

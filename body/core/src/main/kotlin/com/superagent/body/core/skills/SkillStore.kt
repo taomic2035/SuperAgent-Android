@@ -8,6 +8,9 @@ import com.superagent.common.CommitBoundaryGuard
 import com.superagent.common.SkillLearnResult
 import com.superagent.common.SkillListResult
 import com.superagent.common.SkillMeta
+import com.superagent.common.SkillSearchHit
+import com.superagent.common.SkillSearchResult
+import com.superagent.common.SkillIndex
 import com.superagent.common.TraceStep
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -61,6 +64,19 @@ class SkillStore(
         val visible = loadAll().filter { it.state != "deprecated" }
         val sorted = visible.sortedByDescending { statePriority(it.state) }
         return SkillListResult(sorted.map { SkillMeta(it.name, it.description, it.appPackage, it.tags) })
+    }
+
+    /**
+     * 技能检索（AD-05 R3，从 brain skills/index.ts 下沉）。
+     * 委托 body/common SkillIndex（中文 2-gram TF-IDF），检索是设备端数据业务（技能库在 filesDir），归 body。
+     */
+    fun search(query: String, threshold: Double = SkillIndex.MIN_SCORE): SkillSearchResult {
+        val visible = loadAll().filter { it.state != "deprecated" }
+        val metas = visible.map { SkillMeta(it.name, it.description, it.appPackage, it.tags) }
+        val index = SkillIndex()
+        index.rebuild(metas)
+        val hits = index.retrieve(query, threshold).map { SkillSearchHit(it.skill, it.score) }
+        return SkillSearchResult(hits)
     }
 
     fun learn(goal: String, appPackage: String, trace: List<TraceStep>): SkillLearnResult {

@@ -6,6 +6,20 @@
 
 ### 已完成
 
+**AD-05 架构纠正 + R1/R2/R3 重构**（2026-08-19）
+
+- 架构决策：pi 只用核心 Loop（`Agent` + `pi-ai` Provider 解耦），**不用** AgentHarness/Session/JsonlSessionRepo/loadSkills（经 agentos-android 研究文档论证不适合系统级 Agent；三参考项目无一使用）
+- 周边在本项目重实现，参照 Kestrel（android-agent）成熟经验：
+  - `runState.ts` 增强：失败可见性留痕（成功/失败/崩溃都落全历史）、trace 单调序号、脱敏后落盘（参照 RunTraceBuilder + TraceRedaction）
+  - 新增 `guards/reactGuard.ts`：5 类止损（MaxSteps/NoProgress/Oscillation/Looping/Revisiting，参照 Kestrel ReActGuard）
+  - `guards/finish.ts` 修正：新颖性核验算法改用 Kestrel FinishEvidence（行包含 evidence 或 evidence 包含行 + ≥4字 + 覆盖半数），原 lineHit 逐字符比对算法有误
+- R1：brain `commitBoundary.ts` + 词表副本删除，提交边界/敏感判定权威单点在 body `Guard.kt`
+- R2：`guards/index.ts` 接入 ReActGuard（beforeToolCall 止损 + afterToolCall 喂 guard）+ `main.ts`/`tools` 调 `finishRun` 留痕
+- R3：brain `skills/index.ts` 删除，检索下沉 body `skill.search` RPC（委托 body/common `SkillIndex`，中文 2-gram TF-IDF）
+- 协议 v2.2：skill.search 新增；TraceStep 新增 sensitive/resultKind 字段
+- 文档：docs/09 架构决策记录（AD-01~05）；docs/05 §2.2/§2.6/功能树修订；docs/07 §2.5/变更记录 v2.2
+- 验收：body :common:test 7 项 + brain typecheck + smoke 全绿 + :app:assembleDebug 绿
+
 **WP1 提交边界确认**（2026-08-18）
 
 - 词表同源治理：`body/common/src/main/resources/commit_boundaries.json` 为单一来源，含 commitPhrases/sensitiveNavPhrases/sensitiveSessionActionVerbs/sensitiveUrlPatterns/sensitiveAppPrefixes

@@ -156,6 +156,17 @@ data class SkillListResult(
 )
 
 @Serializable
+data class SkillSearchHit(
+    val skill: SkillMeta,
+    val score: Double,
+)
+
+@Serializable
+data class SkillSearchResult(
+    val hits: List<SkillSearchHit>,
+)
+
+@Serializable
 data class SkillRunResult(
     val result: String,
     val completedSteps: Int,

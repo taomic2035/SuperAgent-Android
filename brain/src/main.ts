@@ -7,8 +7,7 @@ import { buildTools } from "./tools/index.ts"
 import { beforeToolCall, afterToolCall, resetSensitiveSession } from "./guards/index.ts"
 import { loadPersonas } from "./personas/personas.ts"
 import { buildSystemPrompt } from "./personas/promptBuilder.ts"
-import { SkillIndex } from "./skills/index.ts"
-import { beginRun, hasResumableRun, resumeRun } from "./runState.ts"
+import { beginRun, hasResumableRun, resumeRun, finishRun } from "./runState.ts"
 import { env } from "./env.ts"
 import type { AsrResult, BodyEvent, SkillListResult } from "./ipc/types.ts"
 
@@ -40,9 +39,7 @@ async function main(): Promise<void> {
   } catch (err) {
     console.log(`[brain] 技能目录读取失败（不影响启动）：${err instanceof Error ? err.message : String(err)}`)
   }
-  const skillIndex = new SkillIndex()
-  skillIndex.rebuild(skills.skills)
-  console.log(`[brain] 已加载技能 ${skills.skills.length} 个`)
+  console.log(`[brain] 已加载技能 ${skills.skills.length} 个（检索由 body skill.search 提供）`)
 
   const { models, model, label } = resolveModel()
   console.log(`[brain] 模型：${label}`)
@@ -87,9 +84,11 @@ async function runRepl(agent: Agent): Promise<void> {
       responseBuffer = ""
       await agent.prompt(input)
       process.stdout.write("\n\n")
+      finishRun("success")
     } catch (err) {
       process.stdout.write("\n")
       console.log(`[brain] 任务失败：${err instanceof Error ? err.message : String(err)}`)
+      finishRun("crashed", err instanceof Error ? err.message : String(err))
     }
   }
   rl.close()
@@ -129,9 +128,11 @@ async function voiceTurn(body: BodyClient, agent: Agent): Promise<void> {
     if (responseBuffer.trim()) {
       await body.rpc("speech.say", { text: responseBuffer.trim() })
     }
+    finishRun("success")
     console.log("\n---")
   } catch (err) {
     console.log(`[brain] 语音轮次失败：${err instanceof Error ? err.message : String(err)}`)
+    finishRun("crashed", err instanceof Error ? err.message : String(err))
   }
 }
 
