@@ -40,6 +40,13 @@
         android:id="@+id/btn_perms"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="授权麦克风" />
+        android:text="授权麦克风"
+        android:layout_marginBottom="12dp" />
+
+    <Button
+        android:id="@+id/btn_capture"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="开启屏幕捕获（视觉感知）" />
 
 </LinearLayout>

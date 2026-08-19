@@ -11,7 +11,7 @@
     "ActionResult": { "fields": ["located", "signature", "note"] },
     "A11yNode": { "fields": ["label", "clickable", "selected", "sensitive", "bounds"] },
     "Mark": { "fields": ["index", "text", "center"] },
-    "ScreenResult": { "fields": ["signature", "kind", "blank", "nodes", "marks", "pageTexts", "appPackage", "sensitiveSession"] },
+    "ScreenResult": { "fields": ["signature", "kind", "blank", "nodes", "marks", "pageTexts", "appPackage", "sensitiveSession", "screenshotRef"] },
     "AsrResult": { "fields": ["text", "confidence", "durationMs"] },
     "SayResult": { "fields": ["route"] },
     "VoiceprintEnrollResult": { "fields": ["speaker", "samples"] },

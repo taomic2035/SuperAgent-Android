@@ -27,6 +27,8 @@ typealias Handler = suspend (request: RpcRequest) -> RpcResponse
  */
 class BodyServer(
     private val events: EventBus,
+    /** 截图 blob 存放目录（视觉感知 L1，GET /blob/{id}） */
+    private val blobDir: java.io.File,
 ) : NanoHTTPD(BodyContext.settings.host, BodyContext.settings.port) {
 
     private val handlers = ConcurrentHashMap<String, Handler>()
@@ -81,7 +83,25 @@ class BodyServer(
                 val since = session.parameters["since"]?.firstOrNull()?.toLongOrNull() ?: 0L
                 jsonResponse(RpcResponse.success(0, json.encodeToJsonElement(events.poll(since))))
             }
-            "blob" -> jsonResponse(RpcResponse.failure(0, "BLOB_UNSUPPORTED", "/blob 通道 P1 实现"), 200)
+            "blob" -> {
+                // CT-04（P1 分步落地）：GET /blob/{id} 取截图（视觉感知 L1）。POST /blob 仍 BLOB_UNSUPPORTED
+                val id = session.uri.removePrefix("/").trimEnd('/').substringAfter('/', "").substringAfter('/', "")
+                if (id.isBlank() || id.contains('/') || id.contains('\\') || id.contains("..")) {
+                    jsonResponse(RpcResponse.failure(0, "BAD_REQUEST", "非法 blob id"), 400)
+                } else {
+                    val file = java.io.File(blobDir, id)
+                    if (!file.exists()) {
+                        jsonResponse(RpcResponse.failure(0, "NOT_FOUND", "blob 不存在: $id"), 404)
+                    } else {
+                        val res = newFixedLengthResponse(
+                            Response.Status.lookup(200), "image/jpeg",
+                            file.inputStream(), file.length(),
+                        )
+                        res.addHeader("Cache-Control", "no-store")
+                        res
+                    }
+                }
+            }
             else -> jsonResponse(RpcResponse.failure(0, "NOT_FOUND", session.uri), 404)
         }
     }

@@ -49,7 +49,11 @@ class BodyCore(
     private val hardware = HardwareService(context)
     private val hitl = Hitl(context, events)
     private val skills = SkillStore(File(context.filesDir, "skills"), perceiver, selector, controller, events, sensitiveSession)
-    private val server = BodyServer(events)
+    private val blobsDir = File(context.filesDir, "blobs")
+    private val screenshots = com.superagent.body.core.screenshot.ScreenshotService(context).also {
+        com.superagent.body.core.screenshot.ScreenshotService.shared = it
+    }
+    private val server = BodyServer(events, blobsDir)
     private val started = AtomicBoolean(false)
 
     fun start(): Boolean {
@@ -75,6 +79,23 @@ class BodyCore(
                 return@rpc RpcResponse.failure(req.id, "A11Y_DISCONNECTED", "无障碍服务未连接，请在设置中开启", "a11y")
             }
             val mode = req.params?.jsonObject?.get("mode")?.toString()?.trim('"') ?: "auto"
+            // L1 视觉（BD-02.2 第一步）：已授权屏幕捕获时返回截图引用，VLM 识别在 brain 侧；
+            // 未授权自动回退 a11y（typed note，不硬失败）
+            if (mode == "vision" || mode == "auto") {
+                // P0：auto 仍走 a11y（视觉待 brain 侧 VLM 通路就绪后启用），仅显式 vision 走截图
+                if (mode == "vision") {
+                    val ref = runCatching { screenshots.capture(blobsDir) }.getOrNull()
+                    if (ref != null) {
+                        val a11yScreen = perceiver.perceive("a11y", sensitiveSession.inSensitiveSession)
+                        return@rpc ok(
+                            req,
+                            a11yScreen.copy(kind = "vision", marks = null, nodes = null, pageTexts = null, screenshotRef = ref),
+                        )
+                    }
+                    val fallback = perceiver.perceive("a11y", sensitiveSession.inSensitiveSession)
+                    return@rpc ok(req, fallback)
+                }
+            }
             ok(req, perceiver.perceive(mode, sensitiveSession.inSensitiveSession))
         }
 

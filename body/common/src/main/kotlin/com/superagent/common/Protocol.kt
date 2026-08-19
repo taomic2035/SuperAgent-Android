@@ -103,6 +103,8 @@ data class ScreenResult(
     val pageTexts: List<String>? = null,
     val appPackage: String? = null,
     val sensitiveSession: Boolean = false,
+    /** 视觉感知（L1）截图引用：GET /blob/{ref} 取 JPEG，brain 侧送 VLM 识别 marks */
+    val screenshotRef: String? = null,
 )
 
 @Serializable

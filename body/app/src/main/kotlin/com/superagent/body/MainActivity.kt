@@ -36,11 +36,33 @@ class MainActivity : AppCompatActivity() {
             if (Build.VERSION.SDK_INT >= 33) perms.add(Manifest.permission.POST_NOTIFICATIONS)
             ActivityCompat.requestPermissions(this, perms.toTypedArray(), 1)
         }
+        // 视觉感知 L1 授权：系统屏幕捕获弹窗，一次授权全程有效（结果回传 ScreenshotService）
+        findViewById<Button>(R.id.btn_capture).setOnClickListener {
+            val svc = com.superagent.body.core.screenshot.ScreenshotService.shared
+            if (svc == null) {
+                statusText.text = "请先启动躯体服务，再开启屏幕捕获"
+                return@setOnClickListener
+            }
+            startActivityForResult(svc.consentIntent(), REQ_CAPTURE)
+        }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_CAPTURE) {
+            val ok = data != null &&
+                com.superagent.body.core.screenshot.ScreenshotService.shared?.attach(resultCode, data) == true
+            statusText.text = if (ok) "屏幕捕获：已授权（视觉感知可用）" else "屏幕捕获：未授权（感知将回退无障碍）"
+        }
     }
 
     override fun onResume() {
         super.onResume()
         refreshStatus()
+    }
+
+    companion object {
+        private const val REQ_CAPTURE = 1001
     }
 
     private fun refreshStatus() {

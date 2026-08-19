@@ -52,6 +52,8 @@ export interface ScreenResult {
   pageTexts?: string[]
   appPackage?: string
   sensitiveSession?: boolean
+  /** 视觉感知（L1）截图引用：GET /blob/{ref} 取 JPEG，brain 侧送 VLM 识别 marks */
+  screenshotRef?: string
 }
 
 export interface AsrResult {

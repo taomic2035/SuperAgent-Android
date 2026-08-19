@@ -7,6 +7,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
 
     <!-- 包可见性（Android 11+）：无 queries 声明时 getLaunchIntentForPackage 对第三方 App 恒 null，
          control.launch 全灭（2026-08-19 真机实测）。声明 launcher intent 即可见全部可启动 App。 -->
@@ -37,7 +38,7 @@
         <service
             android:name=".BodyService"
             android:exported="false"
-            android:foregroundServiceType="dataSync">
+            android:foregroundServiceType="dataSync|mediaProjection">
         </service>
 
         <service
