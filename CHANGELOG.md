@@ -6,6 +6,14 @@
 
 ### 已完成
 
+**G1 闭环绿达成（M2 文本模式，2026-08-19）**——P0 冲刺首个里程碑，提前 7 天
+
+- 三判据留痕：证据核验真实工作（真机美团驳回+换证通过）/ skill.learn 事件（设置任务 4 步 → candidate + 设备落盘）/ trace resultKind（finish_rejected 多轮）
+- 复验链：:core 序列化插件修复（R1 直证 slug 返回）→ R2 四门全绿宣告；tap 落点红线 5/5；TC-08/TC-14 真机 PASS；launch 诚实化确认
+- 遗留移交：#14 int8 TTS（死点更早+零内存压力→模型文件/config 方向）、#12 驳回复盘、#13 learn 门槛与 slug、G2 飞轮验证排队
+
+**G1 复验轮修复（P0×2 + P1×1）**（2026-08-19）
+
 **P1 复测轮成果 + 三 P0 修复（G1 判据 2/3 达成）**（2026-08-19）
 
 - 真机复测（美团 15 步全 located）：**task.finish 证据核验真实驳回 + trace finish_rejected 留痕**（G1 判据 ①②达成）；ASR 烟测 PASS（SenseVoice mmap 链路健康，佐证 noCompress 正确、问题收敛到 espeak）；TTS 根因翻案定论 native exit(1)（espeak 守卫 bug，非华为杀）；P5 部署链 sha256 一致
