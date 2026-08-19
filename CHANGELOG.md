@@ -6,6 +6,15 @@
 
 ### 已完成
 
+**Termux 原型打通 + GLM 端到端验证**（2026-08-19）
+
+- Termux（v0.118.3）装机：node v24.18.0 + npm 11.19.0；pi-agent-core + pi-ai + pi-telemetry 安装成功（纯 JS，arm64 兼容）
+- 通信通道：发现 Android loopback 127.0.0.1 为 per-uid 网络命名空间隔离，body 改 bind `0.0.0.0`（AD-07，token 鉴权保护）；Termux→body 全链路验证（/health/perceive.screen/control.tap）
+- brain 打包方案（AD-08）：esbuild ESM bundle，`@earendil-works/*`+`typebox` external（修复 esbuild 打包 pi-ai 的 `ModelsImpl is not a constructor`），banner 注入 createRequire polyfill，产物 `dist/brain.mjs` 约 45KB；部署到 Termux `~/brain-lite/`（node_modules 同目录解析）
+- GLM 端到端验证：`live-glm.ts`（mock body）tool-call 往返通过；真机（adb forward 直连）"perceive the current screen"→ GLM 调 `perceive.screen` → 正确识别"超级AI助手"主界面
+- 修复：管道模式 stdin EOF 报 `ERR_USE_AFTER_CLOSE`（readline EOF 退出循环）
+- 文档：docs/09 AD-07/AD-08 + 原型验证更新；docs/08 验收记录 2.2；README 补打包/部署/运行说明
+
 **AD-05 架构纠正 + R1/R2/R3 重构**（2026-08-19）
 
 - 架构决策：pi 只用核心 Loop（`Agent` + `pi-ai` Provider 解耦），**不用** AgentHarness/Session/JsonlSessionRepo/loadSkills（经 agentos-android 研究文档论证不适合系统级 Agent；三参考项目无一使用）

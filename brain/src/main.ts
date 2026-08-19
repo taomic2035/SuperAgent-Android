@@ -73,7 +73,12 @@ async function runRepl(agent: Agent): Promise<void> {
   const rl = createInterface({ input: stdin, output: stdout })
   console.log("\n[brain] 就绪。输入任务（如「帮我点一杯奶茶」），Ctrl+C 退出。\n")
   for (;;) {
-    const line = await rl.question("你> ")
+    let line: string
+    try {
+      line = await rl.question("你> ")
+    } catch {
+      break
+    }
     const input = line.trim()
     if (!input) continue
     if (input === "exit" || input === "quit") break

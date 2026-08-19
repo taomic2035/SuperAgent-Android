@@ -54,8 +54,28 @@ cd brain
 npm install
 export GLM_API_KEY=你的key
 npm run typecheck   # 类型检查
-npm run smoke       # 11 项冒烟（mock 躯体）
+npm run smoke       # 冒烟（mock 躯体，动态计数）
 npm run start       # REPL 入口
+```
+
+**打包与部署**（pi 生态依赖 external，Termux 侧 npm 预装）：
+
+```bash
+cd brain
+node build.mjs                      # 产出 dist/brain.mjs（约 45KB，仅本项目代码）
+# 部署到 Termux（brain.mjs 需放在装有 node_modules 的目录，如 brain-lite/）
+adb push dist/brain.mjs /data/local/tmp/brain.mjs
+adb shell run-as com.termux cp /data/local/tmp/brain.mjs /data/data/com.termux/files/home/brain-lite/brain.mjs
+# Termux 内运行（pi 依赖已在 brain-lite/node_modules）
+cd ~/brain-lite
+GLM_API_KEY=你的key BODY_URL=http://127.0.0.1:8765 BODY_TOKEN=$(cat token) node brain.mjs
+```
+
+**开发机直连真机**（替代 Termux 跑 brain，输出可直接读取）：
+
+```bash
+adb forward tcp:8765 tcp:8765    # PC 的 127.0.0.1:8765 → 真机 body
+# 然后本地跑 brain.mjs 即可操控真机（BODY_URL=http://127.0.0.1:8765）
 ```
 
 ### 躯体（Android Studio / Gradle）
