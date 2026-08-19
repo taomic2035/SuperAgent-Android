@@ -87,27 +87,27 @@ export async function beforeToolCall(
 }
 
 export async function afterToolCall(context: AfterToolCallContext): Promise<undefined> {
-  if (context.isError) return undefined
-
   if (TRACE_TOOLS.has(context.toolCall.name)) {
     const details = (context.result?.details ?? {}) as { located?: boolean; signature?: string }
     const sigAfter = details.signature ?? lastScreenSig
-    const resultKind = details.located === false ? "not_located" : "ok"
+    // 失败步也留痕（P1-19：设备上真实发生的动作不进 trace = 复盘黑洞）；
+    // 且计入止损——失败动作推高 NoProgress，与 Kestrel 语义一致
+    const resultKind = context.isError ? "error" : details.located === false ? "not_located" : "ok"
     addTrace({
       tool: context.toolCall.name,
       args: (context.args as Record<string, unknown>) ?? {},
-      located: details.located ?? true,
+      located: context.isError ? false : (details.located ?? true),
       signature: details.signature,
       timestamp: Date.now(),
       resultKind,
     })
-    // 喂 ReActGuard：sigBefore=上一帧签名，sigAfter=本步返回签名（无则视为未变）
     reactGuard.record(
       context.toolCall.name,
       (context.args as Record<string, unknown>) ?? {},
       lastScreenSig,
       sigAfter,
     )
+    if (context.isError) return undefined
   }
 
   // AD-01：敏感态判定权威在 body（perceive.screen 下发 sensitiveSession），brain 不镜像。

@@ -21,6 +21,14 @@ class Controller(
 ) {
     private val scope = CoroutineScope(Dispatchers.Main)
 
+    /**
+     * 手势回调线程（P0-16/P0-17 修复，2026-08-19 真机实证）：
+     * 回调若走主线程，主线程 latch.await 自等待 = 自死锁恒超时，且超时后排队手势迟发乱点
+     * （蓝牙配对弹窗实锤）。回调改到独立 HandlerThread，主线程等待不再堵死自己。
+     */
+    private val gestureThread = android.os.HandlerThread("gesture-cb").apply { start() }
+    private val gestureHandler = android.os.Handler(gestureThread.looper)
+
     /** 点击像素坐标（与 perceive.screen 返回的 bounds/center 同单位）。带 2px 微位移（Kestrel 实证：部分系统需先移动再抬起）。 */
     suspend fun tap(x: Int, y: Int): ActionResult = dispatchGesture(x, y, x + 2, y + 2, 40L)
 
@@ -54,17 +62,21 @@ class Controller(
     private suspend fun dispatch(svc: AccessibilityService, gesture: GestureDescription): ActionResult {
         val completed = java.util.concurrent.CountDownLatch(1)
         var success = false
-        scope.launch {
-            svc.dispatchGesture(gesture, object : AccessibilityService.GestureResultCallback() {
-                override fun onCompleted(gestureDescription: GestureDescription?) {
-                    success = true
-                    completed.countDown()
-                }
+        val callback = object : AccessibilityService.GestureResultCallback() {
+            override fun onCompleted(gestureDescription: GestureDescription?) {
+                success = true
+                completed.countDown()
+            }
 
-                override fun onCancelled(gestureDescription: GestureDescription?) {
-                    completed.countDown()
-                }
-            }, null)
+            override fun onCancelled(gestureDescription: GestureDescription?) {
+                completed.countDown()
+            }
+        }
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+            // 已在主线程（skill.run 回放路径）：直接派发，不得再 launch(Main) 排队到自己身后
+            svc.dispatchGesture(gesture, callback, gestureHandler)
+        } else {
+            scope.launch { svc.dispatchGesture(gesture, callback, gestureHandler) }
         }
         completed.await(2, TimeUnit.SECONDS)
         return ActionResult(success, null, if (success) null else "手势被系统取消")
