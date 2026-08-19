@@ -106,7 +106,7 @@ class BodyCore(
             commitBoundaryAt(x, y)?.let { label ->
                 return@rpc RpcResponse.failure(req.id, "COMMIT_BOUNDARY", "落点「$label」是提交边界动作，坐标点击不可绕过（转 hitl）", "commit")
             }
-            ok(req, controller.tap(x, y))
+            ok(req, withStableSig(controller.tap(x, y)))
         }
 
         server.rpc("control.longPress") { req ->
@@ -116,7 +116,7 @@ class BodyCore(
             commitBoundaryAt(x, y)?.let { label ->
                 return@rpc RpcResponse.failure(req.id, "COMMIT_BOUNDARY", "落点「$label」是提交边界动作，长按不可绕过（转 hitl）", "commit")
             }
-            ok(req, controller.longPress(x, y, p.int("durationMs")?.toLong() ?: 600L))
+            ok(req, withStableSig(controller.longPress(x, y, p.int("durationMs")?.toLong() ?: 600L)))
         }
 
         server.rpc("control.swipe") { req ->
@@ -337,6 +337,10 @@ class BodyCore(
             ok(req, com.superagent.common.HitlHandoffResult(hitl.handoff(reason)))
         }
     }
+
+    /** 成功动作后附加稳定签名（#18：learn 存 expectedSignature，回放步进校验有据）。 */
+    private fun withStableSig(result: com.superagent.common.ActionResult): com.superagent.common.ActionResult =
+        if (result.located) result.copy(signature = perceiver.currentStableSignature() ?: result.signature) else result
 
     private fun params(req: com.superagent.common.RpcRequest): Params =
         Params(req.params?.jsonObject ?: buildJsonObject {})

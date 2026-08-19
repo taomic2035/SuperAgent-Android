@@ -12,8 +12,6 @@ import com.superagent.common.SkillSearchHit
 import com.superagent.common.SkillSearchResult
 import com.superagent.common.SkillIndex
 import com.superagent.common.TraceStep
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.buildJsonObject
@@ -125,6 +123,25 @@ class SkillStore(
                 recordRun(skill, stale = false)
                 return SkillRunOutcome.SensitiveHandoff(completed)
             }
+            // P0-22/#18：先验证后执行。步 0 至少要求屏幕非空（select 步还有 label 可见性闸）；
+            // 步 i>0 要求上一expectedSignature 匹配当前稳定签名——失配在**执行前**判 Stale，
+            // 杜绝"失配在第0步"与"第0步已盲发"并存的形态（V3 实证）。
+            if (index == 0) {
+                val screen = perceiver.perceive("a11y")
+                if (screen.blank) {
+                    recordRun(skill, stale = true)
+                    return SkillRunOutcome.Stale(completed, index, step)
+                }
+            } else {
+                val expected = skill.steps[index - 1].expectedSignature
+                if (expected != null) {
+                    val cur = perceiver.currentStableSignature()
+                    if (cur == null || cur != expected) {
+                        recordRun(skill, stale = true)
+                        return SkillRunOutcome.Stale(completed, index, step)
+                    }
+                }
+            }
             val ok = executeStep(step)
             if (!ok) {
                 recordRun(skill, stale = true)
@@ -168,21 +185,23 @@ class SkillStore(
         "active" -> 3; "verified" -> 2; "candidate" -> 1; else -> 0
     }
 
-    private suspend fun executeStep(step: SkillStep): Boolean = withContext(Dispatchers.Main) {
-        when (step.tool) {
+    // P0-21：不再 withContext(Main)——dispatch() 已自管主线程亲和（在 Main 直派发、否则 launch(Main)），
+    // 此处切 Main 反而堵死手势回调第一跳（a11y 内部主线程 Handler）→ located 恒 false
+    private suspend fun executeStep(step: SkillStep): Boolean {
+        return when (step.tool) {
             "control.launch" -> controller.launch(step.args["pkg"] ?: "").located
             "control.back" -> controller.back().located
             "control.home" -> controller.home().located
             "control.tap" -> {
-                val x = step.args["x"]?.toIntOrNull() ?: return@withContext false
-                val y = step.args["y"]?.toIntOrNull() ?: return@withContext false
+                val x = step.args["x"]?.toIntOrNull() ?: return false
+                val y = step.args["y"]?.toIntOrNull() ?: return false
                 controller.tap(x, y).located
             }
             "control.typeText" -> controller.typeText(step.args["text"] ?: "").located
             "control.selectOption", "control.selectSpec" -> {
-                val label = step.args["label"] ?: return@withContext false
+                val label = step.args["label"] ?: return false
                 val screen = perceiver.perceive("a11y")
-                if (screen.blank || screen.marks.orEmpty().none { it.text.contains(label) || label.contains(it.text) }) return@withContext false
+                if (screen.blank || screen.marks.orEmpty().none { it.text.contains(label) || label.contains(it.text) }) return false
                 selector.select(label).located
             }
             else -> false

@@ -102,10 +102,30 @@ class ScreenPerceiver(private val accessibilityService: () -> AccessibilityServi
     private fun currentPackage(root: AccessibilityNodeInfo): String? =
         root.packageName?.toString()
 
+    /** 当前屏幕稳定签名（#18 回放校验）；感知失败/空屏返回 null。 */
+    fun currentStableSignature(): String? {
+        val marks = perceive("a11y").marks ?: return null
+        return if (marks.isEmpty()) null else stableSignature(marks)
+    }
+
     companion object {
         fun signature(marks: List<Mark>): String {
             val sb = StringBuilder()
             for (m in marks) sb.append(m.text).append('@').append(m.center.x).append(',').append(m.center.y).append(';')
+            return sha1(sb.toString()).take(12)
+        }
+
+        /**
+         * 稳定签名（#18 回放校验用）：抹掉数字/时间/百分号类易变文本（状态栏时钟、电量、进度），
+         * 坐标按 8px 桶聚合——跨分钟的回放校验不被时钟跳变误判 Stale。
+         */
+        fun stableSignature(marks: List<Mark>): String {
+            val sb = StringBuilder()
+            for (m in marks) {
+                val text = m.text.replace(Regex("[0-9:%.]+"), "#")
+                if (text.isBlank() || text == "#") continue
+                sb.append(text).append('@').append(m.center.x shr 3).append(',').append(m.center.y shr 3).append(';')
+            }
             return sha1(sb.toString()).take(12)
         }
 
