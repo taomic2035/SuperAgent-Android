@@ -33,8 +33,13 @@ class OptionSelector(
         if (screen.blank || marks.isEmpty()) {
             return ActionResult(false, null, "屏幕无文字，无法定位「$label」")
         }
+        // #25（2026-08-19 真机实证收紧）：反向包含（查询词包含屏上短文）曾让屏上「更多」
+        // 命中查询「更多连接」→ 误点。现仅三通道：精确相等 / 屏文包含查询 / 截断宽容——
+        // 截断宽容要求屏文 ≥4 字且覆盖查询 ≥2/3（「立即支付订」仍可命中「立即支付订单」）
         val candidates = marks.filter {
-            it.text.replace(Regex("\\s+"), "").contains(normalized) || normalized.contains(it.text.replace(Regex("\\s+"), ""))
+            val t = it.text.replace(Regex("\\s+"), "")
+            t == normalized || t.contains(normalized) ||
+                (t.length >= 4 && normalized.contains(t) && t.length * 3 >= normalized.length * 2)
         }
         if (candidates.isEmpty()) return ActionResult(false, null, "未找到可见文字「$label」")
         val target = when {
