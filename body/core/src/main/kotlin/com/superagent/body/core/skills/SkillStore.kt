@@ -135,11 +135,28 @@ class SkillStore(
             } else {
                 val expected = skill.steps[index - 1].expectedSignature
                 if (expected != null) {
-                    // #24：校验侧同样等签名稳定（动作返回后页面过渡中，立即采样与记录侧永不相等）
+                    // #24：校验侧等签名稳定（动作返回后页面过渡中，立即采样与记录侧永不相等）
                     val cur = perceiver.settledStableSignature()
                     if (cur == null || cur != expected) {
-                        recordRun(skill, stale = true)
-                        return SkillRunOutcome.Stale(completed, index, step)
+                        // 语义回退（#24 根因修复）：签名精确匹配失败时，检查**下一目标是否可见**——
+                        // 页面时钟/通知徽章等动态内容会让签名跨会话漂移，但语义"下一按钮在不在"
+                        // 是稳定的。下一步 label 可见 → 放行（假阳性根治）；不可见 → 真失配
+                        val nextLabel = step.args["label"]
+                        val semanticOk = nextLabel != null && runCatching {
+                            val screen = perceiver.perceive("a11y")
+                            screen.marks.orEmpty().any { it.text.replace(Regex("\\s+"), "").contains(nextLabel.replace(Regex("\\s+"), "")) }
+                        }.getOrDefault(false)
+                        if (!semanticOk) {
+                            recordRun(skill, stale = true)
+                            return SkillRunOutcome.Stale(completed, index, step)
+                        }
+                        // 语义匹配但签名不匹配：放行并记录（诊断用，长期需统一签名口径）
+                        events.emit("log", buildJsonObject {
+                            put("kind", "skill.sig_mismatch_semantic_pass")
+                            put("step", index)
+                            put("expected", expected)
+                            put("actual", cur ?: "")
+                        })
                     }
                 }
             }
