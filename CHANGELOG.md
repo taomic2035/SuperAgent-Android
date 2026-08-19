@@ -6,6 +6,15 @@
 
 ### 已完成
 
+**GPT 5.6 强制审计消化 + vits Plan B + 视觉双端（2026-08-19 深夜第五批）**
+
+- **审计修复 7 项**（docs/11 报告入库，475dccb）：P0-01 敏感会话绑真实前台（perceive 同步）/ P0-02+03 ActionGate 统一坐标闸门（全节点检查封父容器绕过+敏感会话判定）/ P0-04 过渡（回放 tap 走同闸）/ P0-05 批准单次消费 / P1-02 /blob/{id} 路由修复（mock 盲区：真 body 恒 NOT_FOUND）/ P1-05 签名口径统一 / P2-01 Image 句柄 finally。立项待做：ActionAuthorization 完整收口、HITL nonce、REPL 终态、幂等并发、请求上限、视觉隐私
+- **G2 飞轮绿达成（M3，提前 12 天）**：TC-09 回放 4/4 步 0.25s + 无关页 stale@0 零变化不盲走；TC-10 状态机 verified 实测；历经 P0-16/17/21/22/18 五连真机修复（两层手势自死锁/两种盲走形态/签名闸落地）
+- **TTS Plan B（G3 门解法）**：vits-zh-hf-fanchen 优先加载（lexicon+jieba 独立路径绕开 Kokoro/espeak 问题簇；jieba 惰性落盘+前置校验）
+- **视觉 L1 双端打通**：BodyClient.blob + GLM-4.6V marks（fail-open）+ /blob 端点 + MediaProjection 截图 + screenshotRef 契约三处同步；坐标换算待真机标定
+- **brain 强化**：#19a/#20 提示词 / #7 finishVerified / 降级链脑裂修复 / #12 驳回复盘字段 / #8 30-run 历史归档 / #13 slug 防碰撞 / #24 settled 签名 / #25 匹配收紧
+- **工程**：P0 验收报告 v0.9（docs/08 §2.3，M0-M3 四绿）/ docs/10 主线支线池 + 24h 值班巡检 / docs/00 新 agent 导读 / 人评材料包 / TL-01~03 ✅
+
 **G1 闭环绿达成（M2 文本模式，2026-08-19）**——P0 冲刺首个里程碑，提前 7 天
 
 - 三判据留痕：证据核验真实工作（真机美团驳回+换证通过）/ skill.learn 事件（设置任务 4 步 → candidate + 设备落盘）/ trace resultKind（finish_rejected 多轮）
