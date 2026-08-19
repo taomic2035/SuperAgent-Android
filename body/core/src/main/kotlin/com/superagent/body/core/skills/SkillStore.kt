@@ -57,6 +57,8 @@ class SkillStore(
     private val events: EventBus,
     private val sensitive: com.superagent.body.core.security.SensitiveSessionTracker,
 ) {
+    /** AD-11：由 BodyCore 注入——回放与 RPC 共用唯一动作执行入口（安全闸门不分散） */
+    lateinit var executor: com.superagent.body.core.control.ActionExecutor
     private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     fun list(): SkillListResult {
@@ -81,6 +83,11 @@ class SkillStore(
     fun learn(goal: String, appPackage: String, trace: List<TraceStep>): SkillLearnResult {
         val steps = trace.filter { it.located }
             .filter { it.tool in REPLAYABLE_TOOLS }
+            .filter { t ->
+                // AD-11 learn-time 校验：拒绝含提交边界标签的步（审计 P0-04：不接受未经 body 证明的轨迹）
+                val args = (t.args ?: emptyMap()).mapValues { (_, v) -> v.toString().trim('"') }
+                executor.validateLearnStep(t.tool, args.mapValues { it.value.toString() })
+            }
             .map { t ->
                 SkillStep(
                     tool = t.tool,
@@ -203,28 +210,30 @@ class SkillStore(
         "active" -> 3; "verified" -> 2; "candidate" -> 1; else -> 0
     }
 
-    // P0-21：不再 withContext(Main)——dispatch() 已自管主线程亲和（在 Main 直派发、否则 launch(Main)），
-    // 此处切 Main 反而堵死手势回调第一跳（a11y 内部主线程 Handler）→ located 恒 false
+    // AD-11：全部经 ActionExecutor——闸门/执行/签名统一，不再直调 Controller
     private suspend fun executeStep(step: SkillStep): Boolean {
-        return when (step.tool) {
-            "control.launch" -> controller.launch(step.args["pkg"] ?: "").located
-            "control.back" -> controller.back().located
-            "control.home" -> controller.home().located
+        val action = when (step.tool) {
+            "control.launch" -> com.superagent.body.core.control.ActionExecutor.Action.Launch(step.args["pkg"] ?: "")
+            "control.back" -> com.superagent.body.core.control.ActionExecutor.Action.Back
+            "control.home" -> com.superagent.body.core.control.ActionExecutor.Action.Home
             "control.tap" -> {
                 val x = step.args["x"]?.toIntOrNull() ?: return false
                 val y = step.args["y"]?.toIntOrNull() ?: return false
-                // 审计 P0-04（过渡修复）：回放 tap 走与 RPC 相同的统一闸门（提交边界+敏感会话，全节点检查）
-                val violation = com.superagent.body.core.security.ActionGate.violatingLabel(perceiver, sensitive, x, y)
-                if (violation != null) return false
-                controller.tap(x, y).located
+                com.superagent.body.core.control.ActionExecutor.Action.Tap(x, y)
             }
-            "control.typeText" -> controller.typeText(step.args["text"] ?: "").located
+            "control.typeText" -> com.superagent.body.core.control.ActionExecutor.Action.TypeText(step.args["text"] ?: "")
             "control.selectOption", "control.selectSpec" -> {
                 val label = step.args["label"] ?: return false
-                val screen = perceiver.perceive("a11y")
-                if (screen.blank || screen.marks.orEmpty().none { it.text.contains(label) || label.contains(it.text) }) return false
-                selector.select(label).located
+                if (step.tool == "control.selectSpec") {
+                    com.superagent.body.core.control.ActionExecutor.Action.SelectSpec(label)
+                } else {
+                    com.superagent.body.core.control.ActionExecutor.Action.Select(label)
+                }
             }
+            else -> return false
+        }
+        return when (val r = executor.execute(action)) {
+            is com.superagent.body.core.control.ActionExecutor.Result.Ok -> true
             else -> false
         }
     }

@@ -53,6 +53,8 @@ class BodyCore(
     private val screenshots = com.superagent.body.core.screenshot.ScreenshotService(context).also {
         com.superagent.body.core.screenshot.ScreenshotService.shared = it
     }
+    /** AD-11：唯一动作执行入口——RPC 与回放共用，安全闸门不分散 */
+    val actionExecutor = com.superagent.body.core.control.ActionExecutor(perceiver, controller, selector, sensitiveSession)
     private val server = BodyServer(events, blobsDir)
     private val started = AtomicBoolean(false)
 
@@ -60,6 +62,8 @@ class BodyCore(
         if (!started.compareAndSet(false, true)) return false
         // UI-0：body 是 UI 唯一 owner——悬浮层经 UiBus 订阅同源事件（docs/05 §6.1）
         com.superagent.body.core.ui.UiBus.events = events
+        // AD-11：回放与 RPC 共用唯一动作执行入口
+        skills.executor = actionExecutor
         registerHandlers()
         runCatching { server.start() }
             .onFailure { e ->
@@ -124,16 +128,28 @@ class BodyCore(
             val p = params(req)
             val x = p.int("x") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 x")
             val y = p.int("y") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 y")
-            gate(x, y)?.let { return@rpc it.toFailure(req) }
-            ok(req, withStableSig(controller.tap(x, y)))
+            when (val r = actionExecutor.execute(com.superagent.body.core.control.ActionExecutor.Action.Tap(x, y))) {
+                is com.superagent.body.core.control.ActionExecutor.Result.GateBlocked ->
+                    return@rpc gateFailure(req, r.violation)
+                is com.superagent.body.core.control.ActionExecutor.Result.Failed ->
+                    return@rpc ok(req, ActionResult(false, null, r.reason))
+                is com.superagent.body.core.control.ActionExecutor.Result.Ok ->
+                    ok(req, r.actionResult)
+            }
         }
 
         server.rpc("control.longPress") { req ->
             val p = params(req)
             val x = p.int("x") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 x")
             val y = p.int("y") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 y")
-            gate(x, y)?.let { return@rpc it.toFailure(req) }
-            ok(req, withStableSig(controller.longPress(x, y, p.int("durationMs")?.toLong() ?: 600L)))
+            when (val r = actionExecutor.execute(com.superagent.body.core.control.ActionExecutor.Action.LongPress(x, y, p.int("durationMs")?.toLong() ?: 600L))) {
+                is com.superagent.body.core.control.ActionExecutor.Result.GateBlocked ->
+                    return@rpc gateFailure(req, r.violation)
+                is com.superagent.body.core.control.ActionExecutor.Result.Failed ->
+                    return@rpc ok(req, ActionResult(false, null, r.reason))
+                is com.superagent.body.core.control.ActionExecutor.Result.Ok ->
+                    ok(req, r.actionResult)
+            }
         }
 
         server.rpc("control.swipe") { req ->
@@ -376,12 +392,12 @@ class BodyCore(
     private fun gate(x: Int, y: Int): com.superagent.body.core.security.ActionGate.Violation? =
         com.superagent.body.core.security.ActionGate.violatingLabel(perceiver, sensitiveSession, x, y)
 
-    private fun com.superagent.body.core.security.ActionGate.Violation.toFailure(req: com.superagent.common.RpcRequest): RpcResponse =
-        when (this) {
+    private fun gateFailure(req: com.superagent.common.RpcRequest, v: com.superagent.body.core.security.ActionGate.Violation): RpcResponse =
+        when (v) {
             is com.superagent.body.core.security.ActionGate.Violation.Commit ->
-                RpcResponse.failure(req.id, "COMMIT_BOUNDARY", "落点「$label」是提交边界动作，坐标点击不可绕过（转 hitl）", reason)
+                RpcResponse.failure(req.id, "COMMIT_BOUNDARY", "「${v.label}」是提交边界动作，不可绕过（转 hitl）", v.reason)
             is com.superagent.body.core.security.ActionGate.Violation.SensitiveSession ->
-                RpcResponse.failure(req.id, "COMMIT_BOUNDARY", "敏感会话内动作「$label」需人工确认（hitl.confirm 带 action 放行）", reason)
+                RpcResponse.failure(req.id, "COMMIT_BOUNDARY", "敏感会话内动作「${v.label}」需人工确认（hitl.confirm 带 action 放行）", v.reason)
         }
 
     private class Params(private val obj: JsonObject) {
