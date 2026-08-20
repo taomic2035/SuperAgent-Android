@@ -15,8 +15,8 @@ import kotlinx.serialization.json.put
  * - 进程死亡由 START_STICKY + BodyService.isRunning 标志覆盖（华为可能拦，记事件）
  * - 只做健康检查、有限重连和用户通知，不承诺绕过 Android 后台限制
  */
-class Watchdog(
-    private val context: Context,
+open class Watchdog(
+    private val context: Context?,
     private val events: EventBus,
     private val isA11yConnected: () -> Boolean,
 ) {
@@ -81,14 +81,15 @@ class Watchdog(
     }
 
     private fun notifyUser(message: String) {
+        val ctx = context ?: return
         runCatching {
-            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
             if (android.os.Build.VERSION.SDK_INT >= 26) {
                 nm.createNotificationChannel(
                     android.app.NotificationChannel(CHANNEL, "服务健康", android.app.NotificationManager.IMPORTANCE_DEFAULT),
                 )
             }
-            val notification = android.app.Notification.Builder(context, CHANNEL)
+            val notification = android.app.Notification.Builder(ctx, CHANNEL)
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
                 .setContentTitle("超级AI助手 · 需要处理")
                 .setContentText(message)
@@ -97,6 +98,12 @@ class Watchdog(
             nm.notify(NOTIFY_ID, notification)
         }
     }
+
+    /** 测试钩子：手动触发一次检查（不等 30s 定时器） */
+    internal fun checkForTest() = check()
+
+    /** 测试钩子：子类覆盖以跳过 Android 通知 */
+    internal open fun notifyUserForTest(message: String) = notifyUser(message)
 
     companion object {
         private const val TAG = "Watchdog"
