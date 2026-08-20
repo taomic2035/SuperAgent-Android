@@ -52,6 +52,20 @@ class SpeechEngine(private val context: Context) {
 
     private val recorder = AudioRecorder(File(context.cacheDir, "audio"))
 
+    /** DS-014：TTS 初始化/播放失败写文件日志（华为 logcat 裁剪后台线程 Log.e，必须落盘） */
+    private fun logTtsError(stage: String, e: Throwable? = null, extra: String = "") {
+        val msg = buildString {
+            append("[${System.currentTimeMillis()}] $stage")
+            if (e != null) append(" ${e.javaClass.simpleName}: ${e.message}")
+            if (extra.isNotEmpty()) append(" | $extra")
+            append("\n")
+        }
+        runCatching {
+            File(context.filesDir, "tts-error.log").appendText(msg)
+        }
+        Log.e("SpeechEngine", msg.trim())
+    }
+
     /** Plan C 兜底：Android 系统 TTS（sherpa 全失败时保证出声） */
     val systemTts by lazy { SystemTts(context).also { it.initialize() } }
 
@@ -230,6 +244,9 @@ class SpeechEngine(private val context: Context) {
         return SayResult("speaker")
     }
 
+    /** DS-014：对外暴露 logTtsError（BodyCore say 失败时也写文件） */
+    fun logTtsErrorPublic(stage: String, e: Throwable? = null) = logTtsError(stage, e)
+
     fun interrupt() {
         playing.set(false)
         activeTrack?.let {
@@ -370,7 +387,15 @@ class SpeechEngine(private val context: Context) {
                     ruleFars = "",
                     maxNumSentences = 1,
                 )
-                return OfflineTts(assets, config).also { tts = it }
+                logTtsError("vits constructing", extra = "config model=${config.model.vits.model} lexicon=${config.model.vits.lexicon} fst=${config.ruleFsts}")
+                val engine = try {
+                    OfflineTts(assets, config)
+                } catch (e: Exception) {
+                    logTtsError("vits constructor FAILED", e, "config above")
+                    throw e
+                }
+                logTtsError("vits constructed OK, sampleRate=${engine.sampleRate()}")
+                return engine.also { tts = it }
             }
             // G3.1：int8 优先（fp32 实测 PSS 尖峰 808MB → native exit(1)；
             // int8 体积 114MB，session 内存预期 ~400MB）。int8 缺失时退回 fp32。

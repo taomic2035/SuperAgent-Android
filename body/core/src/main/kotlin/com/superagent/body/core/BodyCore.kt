@@ -257,7 +257,11 @@ class BodyCore(
                 runCatching { play.say(t, v) }
                     .onFailure { e ->
                         Log.e("BodyCore", "TTS 播放失败", e)
-                        // fire-and-forget 的失败也要可观测（brain 可经 /events 感知），不静默吞
+                        // DS-014：华为 logcat 裁剪后台线程 → 错误写文件持久化
+                        runCatching {
+                            java.io.File(context.filesDir, "tts-error.log")
+                                .appendText("[${System.currentTimeMillis()}] say FAILED ${e.javaClass.simpleName}: ${e.message}\n")
+                        }
                         events.emit(
                             "speech",
                             buildJsonObject {
