@@ -41,8 +41,12 @@ class UiStateController(private val events: EventBus) {
     private var unreadResult = false
     private val listeners = mutableListOf<(Snapshot) -> Unit>()
 
+    private var eventListener: ((String, String?) -> Unit)? = null
+
     fun start() {
-        events.addListener { type, payloadJson -> onEvent(type, payloadJson) }
+        val listener: (String, String?) -> Unit = { type, payloadJson -> onEvent(type, payloadJson) }
+        eventListener = listener
+        events.addListener(listener)
         // UX-11：10s 无心跳 → OFFLINE（brain 停止/崩溃/Termux 被 kill）；恢复心跳 → IDLE
         offlineChecker.scheduleAtFixedRate({
             val elapsed = System.currentTimeMillis() - lastHeartbeatMs
@@ -50,6 +54,13 @@ class UiStateController(private val events: EventBus) {
                 transition(UiState.OFFLINE, "大脑未连接")
             }
         }, 11, 3, java.util.concurrent.TimeUnit.SECONDS)
+    }
+
+    /** U2-H05：服务销毁时清理（防监听器泄漏与重复状态迁移） */
+    fun stop() {
+        eventListener?.let { events.removeListener(it) }
+        eventListener = null
+        offlineChecker.shutdownNow()
     }
 
     private fun onEvent(type: String, payloadJson: String?) {

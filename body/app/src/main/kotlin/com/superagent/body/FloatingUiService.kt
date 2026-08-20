@@ -54,6 +54,7 @@ class FloatingUiService : android.app.Service() {
 
     override fun onDestroy() {
         OverlayGate.unregister()
+        runCatching { ui.stop() } // U2-H05：清理监听器与定时线程
         runCatching { ball?.let { wm.removeView(it) } }
         runCatching { strip?.let { wm.removeView(it) } }
         runCatching { panel?.let { wm.removeView(it) } }
@@ -105,9 +106,46 @@ class FloatingUiService : android.app.Service() {
     private fun onBallClick() {
         when (ui.state) {
             UiStateController.UiState.IDLE, UiStateController.UiState.OFFLINE, UiStateController.UiState.MINI ->
-                startActivity(Intent(this, CommandInputActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            else -> togglePanel()
+                showIdlePanel() // U2-H01：先展开待命面板（防一次点击直接误提交/误录音）
+            UiStateController.UiState.STOPPED, UiStateController.UiState.COMPLETED, UiStateController.UiState.FAILED ->
+                togglePanel() // 结果摘要
+            else -> togglePanel() // 运行中/暂停/等待确认 → 任务控制面板
         }
+    }
+
+    /** U2-H01：待命面板——文字输入入口 + 关闭（不直接打开输入 Activity） */
+    private fun showIdlePanel() {
+        if (panelOpen) { closePanel(); return }
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            background = GradientDrawable().apply { setColor(Color.argb(225, 24, 24, 32)); cornerRadius = 28f }
+            setPadding(48, 36, 48, 36)
+        }
+        root.addView(TextView(this).apply {
+            text = if (ui.state == UiStateController.UiState.OFFLINE) "离线 · 大脑未连接" else "超级AI助手"
+            textSize = 16f; setTextColor(Color.WHITE); setPadding(0, 0, 0, 20)
+        })
+        root.addView(Button(this).apply {
+            text = "💬  文字输入"
+            setOnClickListener {
+                closePanel()
+                startActivity(Intent(this@FloatingUiService, CommandInputActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            }
+        })
+        root.addView(Button(this).apply {
+            text = "关闭"
+            setOnClickListener { closePanel() }
+        })
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            PixelFormat.TRANSLUCENT,
+        ).apply { gravity = Gravity.CENTER }
+        wm.addView(root, params)
+        panel = root
+        panelOpen = true
     }
 
     // ---------- B. 穿透状态条 ----------
