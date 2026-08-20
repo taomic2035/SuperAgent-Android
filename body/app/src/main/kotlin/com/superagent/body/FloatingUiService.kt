@@ -61,7 +61,7 @@ class FloatingUiService : android.app.Service() {
     private fun updateNotification(snap: UiStateController.Snapshot) {
         val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
         val text = ui.notificationText()
-        val notification = android.app.NotificationCompat.Builder(this, "body-service")
+        val notification = android.app.Notification.Builder(this, "body-service")
             .setSmallIcon(android.R.drawable.ic_menu_compass)
             .setContentTitle("超级AI助手")
             .setContentText(text)
