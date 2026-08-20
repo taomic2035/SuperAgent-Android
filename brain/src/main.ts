@@ -76,19 +76,7 @@ async function main(): Promise<void> {
   let agent = new Agent({
     // U2-B01：设备动作必须串行——pi 默认 parallel 可能并发下发多个 tap/swipe
     toolExecution: "sequential",
-    // 技术债 #3：context 裁剪——旧工具结果截断为"[已截断]"，保留最近 10 条完整（防长任务 token 溢出）
-    transformContext: async (messages: unknown[]) => {
-      const msgs = messages as Array<Record<string, unknown>>
-      const toolResults = msgs.filter((m) => m.type === "toolResult")
-      if (toolResults.length <= 10) return messages
-      const cutoffId = String(toolResults[toolResults.length - 11]?.id ?? "")
-      return msgs.map((m) => {
-        if (m.type === "toolResult" && String(m.id ?? "") < cutoffId) {
-          return { ...m, content: [{ type: "text", text: "[已截断：旧工具结果]" }] }
-        }
-        return m
-      }) as unknown as Parameters<typeof agent>[0][]
-    },
+
     initialState: {
       systemPrompt: localOnly ? buildChatOnlyPrompt(persona) : buildSystemPrompt(persona, skills.skills),
       model: resolved.model,
