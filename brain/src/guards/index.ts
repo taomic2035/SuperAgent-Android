@@ -80,7 +80,7 @@ export async function beforeToolCall(
   }
   // I3：暂停请求——阻断动作但等待恢复（非终态，可继续）
   if (isPaused() && !ABORT_EXEMPT_TOOLS.has(context.toolCall.name)) {
-    return { block: true, reason: "任务已暂停。等待用户操作面板后继续。", terminate: false }
+    return { block: true, reason: "任务已暂停。等待用户操作面板后继续。", terminate: true } as { block: true; reason: string; terminate: true }
   }
   // U2-B03：动作下发前上报 act（UI 显示"正在..."时动作即将开始，不是已完成）
   if (TRACE_TOOLS.has(context.toolCall.name)) {
