@@ -141,7 +141,10 @@ do_download() {
   verify_zh_voices
   echo "  Kokoro: $(du -sh "$ASSETS/kokoro-multi-lang-v1_0" | cut -f1)"
 
-  echo "== 4/4 下载 3D-Speaker 声纹模型 =="
+  mkdir -p "$ASSETS/silero_vad"
+  curl -L "$BASE/asr-models/silero_vad.onnx" -o "$ASSETS/silero_vad/model.onnx"
+  echo "  Silero VAD: $(du -sh "$ASSETS/silero_vad" | cut -f1)"
+  echo "== 5/5 下载 3D-Speaker 声纹模型 =="
   curl -L "$BASE/speaker-recongition-models/3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx" \
     -o "$ASSETS/3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx"
   verify_asset "3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx"
