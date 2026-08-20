@@ -147,9 +147,12 @@ class ScreenPerceiver(private val accessibilityService: () -> AccessibilityServi
 
     companion object {
         fun signature(marks: List<Mark>): String {
+            // 性能：CRC32（比 SHA-1 快 ~5x，签名只需唯一性不需密码学安全）
+            val crc = java.util.zip.CRC32()
             val sb = StringBuilder()
             for (m in marks) sb.append(m.text).append('@').append(m.center.x).append(',').append(m.center.y).append(';')
-            return sha1(sb.toString()).take(12)
+            crc.update(sb.toString().toByteArray(Charsets.UTF_8))
+            return java.lang.Long.toHexString(crc.value).padStart(8, '0').take(12)
         }
 
         /**
