@@ -63,10 +63,13 @@ class BodyService : Service() {
             com.superagent.body.core.voice.VoiceLoop.triggerIntent(this),
             android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,
         )
+        // U2-H04：通知兜底显示用户状态（非开发者 RPC 地址）；有状态控制器时动态取
+        val statusText = com.superagent.body.core.ui.UiBus.stateController?.notificationText()
+            ?: "就绪 · 点击悬浮球或通知"
         return NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.ic_menu_compass)
-            .setContentTitle("超级AI助手 · 躯体")
-            .setContentText("0.0.0.0:8765 （本地 RPC 服务运行中，Termux 可访问）")
+            .setContentTitle("超级AI助手")
+            .setContentText(statusText)
             .setOngoing(true)
             .addAction(0, "说话", triggerIntent)
             .addAction(0, "停止", stopIntent)

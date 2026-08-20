@@ -32,9 +32,13 @@ class MainActivity : AppCompatActivity() {
         }
         btnA11y.setOnClickListener { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
         btnPerms.setOnClickListener {
-            val perms = mutableListOf(Manifest.permission.RECORD_AUDIO)
+            // U2-H02（docs/12 §5.1.5）：UI-0 不索取麦克风——只请求通知权限；
+            // RECORD_AUDIO 在语音功能（UI-1）启用时按需申请
+            val perms = mutableListOf<String>()
             if (Build.VERSION.SDK_INT >= 33) perms.add(Manifest.permission.POST_NOTIFICATIONS)
-            ActivityCompat.requestPermissions(this, perms.toTypedArray(), 1)
+            if (perms.isNotEmpty()) {
+                ActivityCompat.requestPermissions(this, perms.toTypedArray(), 1)
+            }
         }
         // 视觉感知 L1 授权：系统屏幕捕获弹窗，一次授权全程有效（结果回传 ScreenshotService）
         findViewById<Button>(R.id.btn_capture).setOnClickListener {

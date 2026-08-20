@@ -11,9 +11,13 @@ let seq = 0
 let taskId = "none"
 let stepIndex = 0
 let stopRequested = false
+/** U2-H03：brain boot 会话标识——重启后嵌入 taskId，UI 侧安全重置 seq 水位 */
+let bootSession = `boot-${Date.now()}`
 
 export function initBrainEvents(client: BodyClient): void {
   body = client
+  bootSession = `boot-${Date.now()}`
+  seq = 0
 }
 
 export function requestStop(): void {
@@ -43,7 +47,7 @@ async function emit(state: BrainEvent["state"], displayText: string, extra?: Par
 }
 
 export async function reportPromptStart(goal: string): Promise<void> {
-  taskId = `task-${Date.now()}`
+  taskId = `task-${Date.now()}-${bootSession}`
   stepIndex = 0
   await emit("prompt_start", `目标：${goal.slice(0, 20)}`)
 }

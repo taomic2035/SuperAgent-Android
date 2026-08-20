@@ -45,6 +45,7 @@ class FloatingUiService : android.app.Service() {
         val bus = UiBus.events ?: run { stopSelf(); return }
         ui = UiStateController(bus)
         ui.start()
+        com.superagent.body.core.ui.UiBus.stateController = ui // U2-H04：通知兜底访问
         ui.subscribe { snap -> android.os.Handler(mainLooper).post { render(snap) } }
         addBall()
         addStrip()

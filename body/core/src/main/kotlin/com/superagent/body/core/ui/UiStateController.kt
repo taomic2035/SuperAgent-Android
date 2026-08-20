@@ -74,6 +74,8 @@ class UiStateController(private val events: EventBus) {
             if (ev.state != "prompt_start") return
             activeTaskId = ev.taskId
             recent.clear()
+            // U2-H03：brain 重启后 seq 归零——新 taskId 到来时重置水位（否则新事件全被旧水位丢弃）
+            lastBrainSeq = -1
         }
         if (ev.seq <= lastBrainSeq) return
         lastBrainSeq = ev.seq

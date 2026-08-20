@@ -10,4 +10,8 @@ object UiBus {
     @Volatile
     var events: EventBus? = null
         internal set
+
+    /** U2-H04：通知兜底访问当前 UI 状态（BodyService 构建通知时读取） */
+    @Volatile
+    var stateController: UiStateController? = null
 }
