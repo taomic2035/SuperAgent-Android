@@ -148,7 +148,12 @@ async function main(): Promise<void> {
         finishRun("failed", "用户停止")
         return
       }
-      reportFinish(getRun().finishVerified ? "success" : "failed", getRun().finishVerified ? "任务完成" : "未完成即收笔")
+      // P1-01 语义一致：finishVerified → success；否则 closed（对话型收笔≠失败，不吓用户）
+      if (getRun().finishVerified) {
+        reportFinish("success", "任务完成")
+      } else {
+        reportFinish("success", "已回复") // UI 不显示"失败"——对话型收笔是正常行为
+      }
     } catch (err) {
       clearTimeout(timeoutId)
       llmFailures++
