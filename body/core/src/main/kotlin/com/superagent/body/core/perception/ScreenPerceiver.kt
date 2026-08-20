@@ -13,7 +13,23 @@ import java.security.MessageDigest
 
 class ScreenPerceiver(private val accessibilityService: () -> AccessibilityService?) {
 
+    /** 性能：短时缓存——同一屏幕 300ms 内重复 perceive 直接返回（brain 常连发 perceive+act） */
+    @Volatile
+    private var cachedResult: ScreenResult? = null
+    @Volatile
+    private var cachedAt = 0L
+    @Volatile
+    private var cachedKey = ""
+
     fun perceive(mode: String = "auto", inSensitiveSession: Boolean = false): ScreenResult {
+        // 缓存命中：同 mode + 同敏感态 + 300ms 内
+        val key = "$mode:$inSensitiveSession"
+        val now = android.os.SystemClock.elapsedRealtime()
+        val cached = cachedResult
+        if (cached != null && cachedKey == key && now - cachedAt < 300 && !cached.blank) {
+            return cached
+        }
+
         val root = accessibilityService()?.rootInActiveWindow
             ?: return ScreenResult("", "a11y", true, null, null, null, null, inSensitiveSession)
         val marks = mutableListOf<Mark>()
@@ -32,7 +48,7 @@ class ScreenPerceiver(private val accessibilityService: () -> AccessibilityServi
         }
         val signature = signature(marks)
         val appPkg = currentPackage(root)
-        return ScreenResult(
+        val result = ScreenResult(
             signature = signature,
             kind = "a11y",
             blank = false,
@@ -42,6 +58,11 @@ class ScreenPerceiver(private val accessibilityService: () -> AccessibilityServi
             appPackage = appPkg,
             sensitiveSession = inSensitiveSession,
         )
+        // 缓存写入
+        cachedResult = result
+        cachedKey = key
+        cachedAt = now
+        return result
     }
 
     private fun walk(
