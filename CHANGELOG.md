@@ -6,6 +6,22 @@
 
 ### 已完成
 
+
+**UI-0 走查闭环 + 感知阶梯贯通 + 测试体系扩展（2026-08-20 上午）**
+
+- **U2 走查 12/12 闭环**（6P0+5P1+H06 TTS 脱敏）：B01 abort+串行 / B02 eventPump 常驻 / B03 act/act_done+stepIndex /
+  B04 心跳独立 / B05 STOPPING/STOPPED / B06 精确恢复 / H01 待命面板 / H02 不索取麦克风 /
+  H03 brain 重启 seq 重置 / H04 通知动态刷新 / H05 生命周期清理 / H06 TTS 脱敏+截断
+- **UX 验收 #30-35 修复**：#30 状态条恢复 / #31 seq 水位 / #32 防重放 / #33 OFFLINE 可见 /
+  #34 终态解锁（结果面板+"新任务"重置）/ #35 LLM 流 120s 超时 abort
+- **DS-005 vits dict 修复**：守卫改检查具体文件+失败强制重拷+诊断日志
+- **感知阶梯 L0→L1→L2 贯通**：视觉坐标换算（VLM×1.41→屏幕像素）+ L2 auto 路由
+  （a11y 节点<5 或 WebView → 自动 fallback 截图）
+- **测试体系**：body 18→56 项（core 新增 ActionGateLogic+TtsModelSelection+ActionExecutorGate+UiStateController.stop
+  共 38 项）；brain 17 项（含 vision 坐标换算断言）；契约镜像 25 类型
+- **AD-11 ActionExecutor 统一收口**：RPC 五入口+回放全工具+learn-time 校验共用唯一执行入口
+- **AD-10 HITL nonce 协议**：nonce 绑定原始动作+前台包名+120s 时间窗，一次性原子消费
+
 **GPT 5.6 强制审计消化 + vits Plan B + 视觉双端（2026-08-19 深夜第五批）**
 
 - **审计修复 7 项**（docs/11 报告入库，475dccb）：P0-01 敏感会话绑真实前台（perceive 同步）/ P0-02+03 ActionGate 统一坐标闸门（全节点检查封父容器绕过+敏感会话判定）/ P0-04 过渡（回放 tap 走同闸）/ P0-05 批准单次消费 / P1-02 /blob/{id} 路由修复（mock 盲区：真 body 恒 NOT_FOUND）/ P1-05 签名口径统一 / P2-01 Image 句柄 finally。立项待做：ActionAuthorization 完整收口、HITL nonce、REPL 终态、幂等并发、请求上限、视觉隐私
