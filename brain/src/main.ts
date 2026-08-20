@@ -19,6 +19,9 @@ const BODY_TOKEN = env("BODY_TOKEN", "super-agent-dev")
 const PERSONA_NAME = env("PERSONA", "assistant")
 const VOICE_MODE = env("VOICE_MODE", "0") === "1"
 
+/** U2-#35：LLM 流超时（实测 GLM 可停滞 3-14min，120s 保护性 abort） */
+const LLM_STREAM_TIMEOUT_MS = 120_000
+
 let responseBuffer = ""
 
 async function main(): Promise<void> {
@@ -127,14 +130,19 @@ async function main(): Promise<void> {
     return true
   }
 
-  /** 带 failover 的 prompt：连续失败 ≥3 次切换模型并用新模型重试当次输入一次。 */
+  /** 带 failover 的 prompt：连续失败 ≥3 次切换模型；U2-#35：120s 流超时自动 abort。 */
   async function promptAgent(input: string): Promise<void> {
     clearStop()
     void reportPromptStart(input)
+    // U2-#35：LLM 流停滞（GLM 4/4 实测卡 3-14min）——120s 超时 abort 防任务挂死
+    const timeoutId = setTimeout(() => {
+      try { agent.abort() } catch { /* 已完成 */ }
+      console.log("[brain] LLM 流超时（120s），已 abort")
+    }, LLM_STREAM_TIMEOUT_MS)
     try {
       await agent.prompt(input)
+      clearTimeout(timeoutId)
       llmFailures = 0
-      // U2-B01：abort 后 prompt 正常 resolve——检查停止标志判 aborted（不能报 success/failed）
       if (isStopRequested()) {
         reportFinish("aborted", "用户已停止")
         finishRun("failed", "用户停止")
@@ -142,6 +150,7 @@ async function main(): Promise<void> {
       }
       reportFinish(getRun().finishVerified ? "success" : "failed", getRun().finishVerified ? "任务完成" : "未完成即收笔")
     } catch (err) {
+      clearTimeout(timeoutId)
       llmFailures++
       const msg = err instanceof Error ? err.message : String(err)
       if (llmFailures >= 3) {

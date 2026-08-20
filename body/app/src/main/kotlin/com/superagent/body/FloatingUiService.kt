@@ -124,11 +124,55 @@ class FloatingUiService : android.app.Service() {
     private fun onBallClick() {
         when (ui.state) {
             UiStateController.UiState.IDLE, UiStateController.UiState.OFFLINE, UiStateController.UiState.MINI ->
-                showIdlePanel() // U2-H01：先展开待命面板（防一次点击直接误提交/误录音）
-            UiStateController.UiState.STOPPED, UiStateController.UiState.COMPLETED, UiStateController.UiState.FAILED ->
-                togglePanel() // 结果摘要
+                showIdlePanel()
+            // U2-#34：终态（完成/失败/停止）点球先展示结果摘要，再提供"新任务"入口重置到 IDLE
+            UiStateController.UiState.COMPLETED, UiStateController.UiState.FAILED, UiStateController.UiState.STOPPED -> {
+                showResultPanel()
+            }
             else -> togglePanel() // 运行中/暂停/等待确认 → 任务控制面板
         }
+    }
+
+    /** U2-#34：结果摘要面板（展示结果 + "新任务"重置到 IDLE + 关闭） */
+    private fun showResultPanel() {
+        if (panelOpen) { closePanel(); return }
+        val snap = ui.snapshot()
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            background = GradientDrawable().apply { setColor(Color.argb(225, 24, 24, 32)); cornerRadius = 28f }
+            setPadding(48, 36, 48, 36)
+        }
+        root.addView(TextView(this).apply {
+            text = stateLabel(snap.state)
+            textSize = 16f; setTextColor(Color.WHITE); setPadding(0, 0, 0, 8)
+        })
+        if (snap.currentStep.isNotBlank()) {
+            root.addView(TextView(this).apply {
+                text = snap.currentStep; textSize = 13f; setTextColor(Color.LTGRAY); maxLines = 2; setPadding(0, 0, 0, 16)
+            })
+        }
+        root.addView(Button(this).apply {
+            text = "📝  新任务"
+            setOnClickListener {
+                closePanel()
+                ui.setIdle() // 重置到 IDLE——解除终态锁死
+                showIdlePanel()
+            }
+        })
+        root.addView(Button(this).apply {
+            text = "关闭"
+            setOnClickListener { closePanel() }
+        })
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            PixelFormat.TRANSLUCENT,
+        ).apply { gravity = Gravity.CENTER }
+        wm.addView(root, params)
+        panel = root
+        panelOpen = true
     }
 
     /** U2-H01：待命面板——文字输入入口 + 关闭（不直接打开输入 Activity） */
