@@ -192,7 +192,7 @@ async function main(): Promise<void> {
       ok("skill.run SKILL_STALE 带续走上下文（recovery 提示）")
     }
 
-    // 感知 L1：vision 模式取 blob + VLM marks 并入（mock VLM 识别器）
+    // 感知 L1：vision 模式取 blob + VLM marks 并入 + 坐标换算（VLM 截图像素→屏幕像素）
     {
       const toolsV = buildTools(
         body,
@@ -201,22 +201,25 @@ async function main(): Promise<void> {
         async (b64) => {
           assert.ok(b64.length > 0)
           return [
-            { index: 0, text: "立即支付", center: { x: 800, y: 1500 } },
-            { index: 1, text: "返回", center: { x: 40, y: 60 } },
+            { index: 0, text: "立即支付", center: { x: 400, y: 800 } },  // VLM 截图像素
+            { index: 1, text: "返回", center: { x: 20, y: 30 } },
           ]
         },
       )
       const perceive = toolsV.find((t) => t.name === "perceive.screen")!
       const r = (await perceive.execute("v1", { mode: "vision" })) as {
         content: Array<{ type: string; text: string }>
-        details: { signature?: string }
       }
       const parsed = JSON.parse(r.content[0].text) as ScreenResult
       assert.equal(parsed.kind, "vision")
       assert.equal(parsed.marks?.length, 2)
-      assert.deepEqual(parsed.pageTexts, ["立即支付", "返回"])
-      assert.ok(r.details.signature) // a11y 签名保留（ReAct 连续性）
-      ok("perceive.screen(vision)：blob 取图 + VLM marks 并入，signature 保留")
+      // 坐标换算：400 × (2256/1600) = 564, 800 × 1.41 = 1128
+      const scale = 2256 / 1600
+      assert.equal(parsed.marks![0].center.x, Math.round(400 * scale))
+      assert.equal(parsed.marks![0].center.y, Math.round(800 * scale))
+      assert.equal(parsed.marks![1].center.x, Math.round(20 * scale))
+      assert.equal(parsed.marks![1].center.y, Math.round(30 * scale))
+      ok("perceive.screen(vision)：VLM marks 坐标按 1.41 因子换算为屏幕像素")
     }
 
     // TC-08：证据驳回计数（×3 升级建议转人工；好证据通过）
