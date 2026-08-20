@@ -160,7 +160,7 @@ class SpeechEngine(private val context: Context) {
                     val sid = voice?.speakerId ?: 0
                     // DS-007 流式恢复：用匿名内部类（object）替代 lambda——D8 不 desugar 匿名类，
                     // JNI 反射调用 Function1.invoke() 桥不会丢。保留流式播放（首包 ~100ms）。
-                    val callback = object : kotlin.jvm.functions.Function1<FloatArray, Int> {
+                    val callback = object : Function1<FloatArray, Int> {
                         override fun invoke(samples: FloatArray): Int {
                             if (!playing.get()) return 1
                             val pcm = ShortArray(samples.size)
