@@ -3,6 +3,7 @@ package com.superagent.body.core.ui
 import com.superagent.body.core.events.EventBus
 import com.superagent.common.BrainEvent
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -68,6 +69,17 @@ class UiStateController(private val events: EventBus) {
             "brain" -> payloadJson?.let { onBrain(it) }
             "voice" -> payloadJson?.let { onVoice(it) }
             "hitl" -> payloadJson?.let { onHitl(it) }
+            // codex 静态核验：Watchdog 的 a11y 状态必须进状态机——断开不得仍显示运行中
+            "state" -> payloadJson?.let { onSystemState(it) }
+        }
+    }
+
+    private fun onSystemState(payloadJson: String) {
+        val obj = runCatching { Json.parseToJsonElement(payloadJson).jsonObject }.getOrNull() ?: return
+        when (obj["kind"]?.jsonPrimitive?.contentOrNull) {
+            "a11y_persistent_failure" -> transition(UiState.BLOCKED, "无障碍服务断开，请在设置中重新开启")
+            "a11y_recovered" -> if (state == UiState.BLOCKED) transition(UiState.IDLE, "")
+            // a11y_disconnected（首轮）：瞬时抖动不打断显示，只靠通知兜底
         }
     }
 

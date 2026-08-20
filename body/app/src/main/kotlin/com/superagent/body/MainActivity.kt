@@ -36,6 +36,10 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btn_perms).setOnClickListener {
             val perms = mutableListOf<String>()
             if (Build.VERSION.SDK_INT >= 33) perms.add(Manifest.permission.POST_NOTIFICATIONS)
+            // codex 静态核验：语音链依赖麦克风——首启一并请求（ASR/声纹/barge-in）
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                perms.add(Manifest.permission.RECORD_AUDIO)
+            }
             if (perms.isNotEmpty()) ActivityCompat.requestPermissions(this, perms.toTypedArray(), 1)
         }
         findViewById<Button>(R.id.btn_capture).setOnClickListener {
@@ -64,6 +68,7 @@ class MainActivity : AppCompatActivity() {
                 ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED),
             "无障碍服务" to (BodyAccessibilityService.instance != null),
             "悬浮窗（SAW）" to (Build.VERSION.SDK_INT < 23 || Settings.canDrawOverlays(this)),
+            "麦克风（语音）" to (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED),
             "躯体服务" to BodyService.isRunning,
         )
         statusContainer.removeAllViews()

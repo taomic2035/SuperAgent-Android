@@ -48,6 +48,10 @@ open class Watchdog(
     private fun check() {
         val a11yOk = isA11yConnected()
         if (a11yOk) {
+            // codex 静态核验补齐：从断连恢复时发事件（否则 UI BLOCKED 态无法退出）
+            if (consecutiveA11yFailures > 0) {
+                events.emit("state", buildJsonObject { put("kind", "a11y_recovered") })
+            }
             consecutiveA11yFailures = 0
             lastHealthyAt = System.currentTimeMillis()
             return

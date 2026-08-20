@@ -343,16 +343,15 @@ class FloatingUiService : android.app.Service() {
         UiStateController.UiState.FAILED -> "失败"
     }
 
-    // U2-B06：保存截图前三表面的精确可见状态，采集后按原样恢复（不是只恢复控制球）
+    // U2-B06：保存截图前球/条的精确可见状态，采集后按原样恢复（不是只恢复控制球）
+    // 面板刻意不保存不恢复：截图意味着页面将变化，旧面板内容已过时（codex 静态核验质询过，维持此设计）
     private var savedBallVisible = true
     private var savedStripVisible = false
-    private var savedPanelOpen = false
 
     private fun hideAll() {
         android.os.Handler(mainLooper).post {
             savedBallVisible = ball?.visibility == View.VISIBLE
             savedStripVisible = strip?.visibility == View.VISIBLE
-            savedPanelOpen = panelOpen
             ball?.visibility = View.GONE
             strip?.visibility = View.GONE
             if (panelOpen) closePanel()
@@ -363,7 +362,7 @@ class FloatingUiService : android.app.Service() {
         android.os.Handler(mainLooper).post {
             ball?.visibility = if (savedBallVisible) View.VISIBLE else View.GONE
             strip?.visibility = if (savedStripVisible) View.VISIBLE else View.GONE
-            // 面板不自动恢复（用户可能已在截图期间改变意图；状态条恢复由下一事件驱动）
+            // 面板不自动恢复（状态条内容恢复由下一事件驱动）
         }
     }
 
