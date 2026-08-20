@@ -175,10 +175,11 @@ class SpeechEngine(private val context: Context) {
     fun say(text: String, voice: VoiceConfig?): SayResult {
         val wake = wakeLock()
         try {
+            // DS-016：catch Throwable（非仅 Exception）——Error 族（NoSuchMethodError 等）也要走 fallback
             val t = try {
                 tts()
-            } catch (e: SpeechUnavailable) {
-                logTtsError("sherpa unavailable, fallback to system TTS", e)
+            } catch (e: Throwable) {
+                logTtsError("sherpa TTS FAILED (${e.javaClass.simpleName}: ${e.message}), fallback to system TTS")
                 null
             }
             if (t == null) return systemTtsFallback(text)
@@ -249,15 +250,19 @@ class SpeechEngine(private val context: Context) {
                 }
         }.getOrNull()
 
-    /** Plan C：Android 系统 TTS 兜底——零模型依赖、保证出声 */
+    /** Plan C：Android 系统 TTS 兜底——即使未完全就绪也尝试播放 */
     private fun systemTtsFallback(text: String): SayResult {
+        logTtsError("systemTtsFallback called", extra = "isReady=${systemTts.isReady()}")
         if (!systemTts.isReady()) {
-            throw SpeechUnavailable("系统 TTS 也不可用（无中文语音引擎）")
+            // 强制再等一次（可能初始化还没完成）
+            systemTts.initialize()
+            if (!systemTts.isReady()) {
+                logTtsError("systemTts still NOT ready after retry")
+                throw SpeechUnavailable("系统 TTS 不可用（无中文语音引擎）")
+            }
         }
         val ok = systemTts.speak(text)
-        if (!ok) {
-            Log.w("SpeechEngine", "系统 TTS 播报可能未完成")
-        }
+        logTtsError("systemTts speak result=$ok")
         return SayResult("speaker")
     }
 
@@ -411,9 +416,10 @@ class SpeechEngine(private val context: Context) {
                 val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
                 val future = executor.submit<OfflineTts> {
                     try {
-                        OfflineTts(assets, config)  // 传 assets（非 null）但路径全是文件绝对路径
-                    } catch (e: Exception) {
-                        logTtsError("vits constructor threw", e)
+                        OfflineTts(assets, config)
+                    } catch (e: Throwable) {
+                        // DS-016：catch Throwable——Error 族（NoSuchMethodError/UnsatisfiedLinkError）也要日志
+                        logTtsError("vits constructor THREW ${e.javaClass.simpleName}", e as? Exception, "msg=${e.message}")
                         throw e
                     }
                 }
@@ -424,9 +430,15 @@ class SpeechEngine(private val context: Context) {
                     executor.shutdownNow()
                     logTtsError("vits constructor TIMEOUT (10s)", extra = "likely assets mmap blocked on Huawei")
                     throw SpeechUnavailable("vits 构造超时（华为 assets mmap 阻塞）")
-                } catch (e: Exception) {
+                } catch (e: java.util.concurrent.ExecutionException) {
                     executor.shutdownNow()
-                    throw e
+                    val cause = e.cause ?: e
+                    logTtsError("vits constructor ExecutionException → ${cause.javaClass.simpleName}: ${cause.message}")
+                    throw SpeechUnavailable("vits 构造失败：${cause.javaClass.simpleName}: ${cause.message}")
+                } catch (e: Throwable) {
+                    executor.shutdownNow()
+                    logTtsError("vits constructor UNEXPECTED ${e.javaClass.simpleName}: ${e.message}")
+                    throw SpeechUnavailable("vits 构造异常：${e.javaClass.simpleName}")
                 }
                 executor.shutdown()
                 logTtsError("vits constructed OK", extra = "sampleRate=${engine.sampleRate()} speakers=${engine.numSpeakers()}")
