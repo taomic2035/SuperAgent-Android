@@ -7,6 +7,29 @@
 ### 已完成
 
 
+**全自主推进批次（2026-08-20 上午 33 项）**
+
+- **copyAssetsDir 真正根因修复**（DS-005）：assets.list(file) 返回空数组非 null → `!= null` 恒 true → 文件全被当目录拷空目录。改为先试 assets.open()（能开=文件）。此 bug 同时影响 espeak-ng-data
+- **I3 PAUSING/PAUSED 完整语义**：暂停（阻断动作可恢复）≠停止（abort 终态）。面板三按钮：继续/停止/关闭
+- **UX-01 首启产品化**：按序检查四项就绪（通知→无障碍→SAW→服务），只突出第一个缺失项（▶红色），返回自动复检
+- **TL-05 GitHub Actions CI**：push/PR 自动跑 brain typecheck+contract+smoke + body 56 项测试
+- **性能**：perceive 300ms 短时缓存（同屏重复感知零开销）；RPC 网络瞬断自动重试（500ms 后一次）
+- **U2-B01 abort+串行**：toolExecution sequential + agent.abort() + 120s LLM 流超时
+- **UX-02 commandId 去重**：事件 seq 做 ID 防双发
+- **UX #34 终态解锁**：结果面板+"新任务"重置到 IDLE
+- **对话型收笔不显示"失败"**：reportFinish 语义与 finishRun closed 对齐
+- **#36 悬浮层自愈**：UiBus null 延迟 1s 重试（华为杀 body 后不丢 UI）
+- **FR 状态大终刷**：12 项 🔧→✅/◐（对齐代码现状）
+- **README 全面重写**：修链接+刷新到最新状态+核心能力表+CI 入目录
+- **body/core 测试 39→56 项**：ActionGateLogic+TtsModelSelection+ActionExecutorGate+UiStateController.stop
+- **视觉坐标换算激活**：VLM 截图像素×1.41→屏幕像素（smoke 断言）
+- **L2 auto 路由**：a11y 节点<5 或 WebView → 自动 fallback 视觉
+- **通知动态刷新**：随 UI 状态实时更新（非仅构建时）
+- **TTS 脱敏+截断**：voiceTurn 不朗读模型全文（含金额/账号）
+- **H01 待命面板**：IDLE 点球先展开选项面板（防误触）
+- **H05 生命周期清理**：UiStateController.stop() 清理监听器+定时线程
+
+
 **UI-0 走查闭环 + 感知阶梯贯通 + 测试体系扩展（2026-08-20 上午）**
 
 - **U2 走查 12/12 闭环**（6P0+5P1+H06 TTS 脱敏）：B01 abort+串行 / B02 eventPump 常驻 / B03 act/act_done+stepIndex /
