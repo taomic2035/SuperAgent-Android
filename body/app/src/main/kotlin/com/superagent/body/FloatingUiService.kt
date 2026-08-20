@@ -42,7 +42,25 @@ class FloatingUiService : android.app.Service() {
     override fun onCreate() {
         super.onCreate()
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
-        val bus = UiBus.events ?: run { stopSelf(); return }
+        val bus = UiBus.events
+        if (bus == null) {
+            // #36：body 重启时序竞态——UiBus 可能尚未初始化（core.start() 与本服务启动竞速）。
+            // 延迟 1s 重试而非立即自杀（START_STICKY 恢复场景下悬浮层不再丢失）
+            android.os.Handler(mainLooper).postDelayed({
+                val retryBus = UiBus.events
+                if (retryBus != null) {
+                    initUi(retryBus)
+                } else {
+                    android.util.Log.w("FloatingUiService", "UiBus 仍为空（1s 重试后），悬浮层放弃启动")
+                    stopSelf()
+                }
+            }, 1000)
+            return
+        }
+        initUi(bus)
+    }
+
+    private fun initUi(bus: com.superagent.body.core.events.EventBus) {
         ui = UiStateController(bus)
         ui.start()
         com.superagent.body.core.ui.UiBus.stateController = ui
