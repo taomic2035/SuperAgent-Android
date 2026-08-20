@@ -16,8 +16,9 @@ import type { AfterToolCallContext } from "@earendil-works/pi-agent-core"
 import { beginRun, addTrace, finishRun, hasResumableRun, resumeRun, resetRun, buildResumeContext, peekRun, getRun } from "../src/runState.ts"
 import type { RunState } from "../src/runState.ts"
 import { buildTools } from "../src/tools/index.ts"
+import { parseCandidates } from "../src/memory/reflect.ts"
 import { loadPersonas } from "../src/personas/personas.ts"
-import type { ScreenResult } from "../src/ipc/types.ts"
+import type { MemoryWriteResult, ScreenResult } from "../src/ipc/types.ts"
 
 let passed = 0
 function ok(name: string): void {
@@ -279,6 +280,64 @@ async function main(): Promise<void> {
         delete process.env.SUPER_AGENT_STATE_DIR
       }
       ok("task.finish 证据驳回 ×3 升级转人工；相关性软门 FAIL 可驳/异常放行")
+    }
+
+    // ME-1/ME-2 记忆闭环：remember/search 工具往返 + 敏感拒绝入库 + reflect 解析与异步触发
+    {
+      const tools = buildTools(body, loadPersonas().personas)
+      const remember = tools.find((t) => t.name === "memory.remember")!
+      const search = tools.find((t) => t.name === "memory.search")!
+
+      const r1 = (await remember.execute("m1", { kind: "preference", topic: "奶茶口味", content: "少糖" })) as {
+        details: MemoryWriteResult
+      }
+      assert.equal(r1.details.merged, false)
+      const r2 = (await remember.execute("m2", { kind: "preference", topic: "奶茶口味", content: "少糖" })) as {
+        details: MemoryWriteResult
+      }
+      assert.equal(r2.details.merged, true, "同内容重述触发合并（mock 对齐 body 语义）")
+      // ME 红线：身份证/卡号/密码/验证码打码命中即拒绝入库（不是入库打码版）
+      await assert.rejects(
+        remember.execute("m3", { kind: "fact", topic: "证件", content: "身份证号 110101199003077758" }),
+        (e: unknown) => e instanceof Error && e.message.includes("敏感信息"),
+      )
+      const s = (await search.execute("m4", { query: "奶茶" })) as { content: Array<{ text: string }> }
+      assert.ok(s.content[0].text.includes("奶茶口味") && s.content[0].text.includes("少糖"))
+      ok("memory.remember/search 工具往返；敏感内容拒绝入库")
+
+      assert.equal(parseCandidates('[{"kind":"preference","topic":"奶茶口味","content":"少糖"}]').length, 1)
+      assert.equal(parseCandidates("无可提取，输出 []").length, 0)
+      assert.equal(parseCandidates('前缀 [{"kind":"diary","topic":"t","content":"c"}] 后缀').length, 0, "非法 kind 条目丢弃")
+      assert.equal(parseCandidates('说明 [{"kind":"fact","topic":"t","content":"c"},{"kind":"lesson"}]').length, 1, "缺字段条目丢弃")
+      ok("reflect parseCandidates 容错解析")
+
+      // reflect 触发：task.finish 证据核验通过后 fire-and-forget（对齐 mock 4 屏轮换消除步数不确定性）
+      const reflectCalls: Array<{ goal: string; summary: string; tools: string[] }> = []
+      const toolsR = buildTools(body, loadPersonas().personas, undefined, undefined, async (input) => {
+        reflectCalls.push(input)
+      })
+      const finishR = toolsR.find((t) => t.name === "task.finish")!
+      for (let i = 0; i < 4; i++) {
+        const scr = await body.rpc<ScreenResult>("perceive.screen", { mode: "a11y" })
+        if (scr.pageTexts?.includes("立即购买")) break
+      }
+      const tmp3 = await mkdtemp(join(tmpdir(), "sa-runstate3-"))
+      process.env.SUPER_AGENT_STATE_DIR = tmp3
+      try {
+        beginRun("点一杯奶茶")
+        addTrace({ tool: "control.tap", args: { x: 1, y: 2 }, located: true, signature: "s1", timestamp: Date.now() })
+        addTrace({ tool: "control.selectOption", args: { label: "去结算" }, located: true, signature: "s2", timestamp: Date.now() })
+        await finishR.execute("fr1", { summary: "下单完成", evidence: "去结算" })
+        await new Promise((r) => setTimeout(r, 50))
+        assert.equal(reflectCalls.length, 1, "reflect 被异步触发")
+        assert.equal(reflectCalls[0].goal, "点一杯奶茶")
+        assert.equal(reflectCalls[0].summary, "下单完成")
+        assert.deepEqual(reflectCalls[0].tools, ["control.tap", "control.selectOption"])
+        resetRun()
+      } finally {
+        delete process.env.SUPER_AGENT_STATE_DIR
+      }
+      ok("task.finish 成功后异步触发 reflect（goal/summary/tools 透传，不阻塞完成路径）")
     }
 
     const ev1 = await body.events(0)

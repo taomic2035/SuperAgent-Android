@@ -152,3 +152,36 @@ export interface BrainEvent {
   resultKind?: string
   timestamp: number
 }
+
+/** ME-1 记忆条目（docs/15 §4）：body 侧 SQLite 权威存储，brain 只经 RPC 读写 */
+export interface MemoryEntry {
+  id: number
+  kind: "fact" | "preference" | "lesson" | "routine"
+  /** 归并键（如 奶茶口味 / 快递 / 美团滑块）——同 topic 同 kind 去重合并 */
+  topic: string
+  content: string
+  /** 命中/时长加权：同内容重述 +0.1（cap 1.0），冲突时新覆盖旧 */
+  confidence: number
+  /** run:<goal摘要> | user-told | reflection | gate-lesson */
+  source: string
+  hits: number
+  /** 软删（修订留痕）：被同 topic 新版顶掉的旧条目 revoked=1，检索不可见 */
+  revoked?: boolean
+  createdAt: number
+  updatedAt: number
+}
+
+export interface MemoryWriteResult {
+  id: number
+  /** true=与既有记忆合并/顶替（同 topic 同 kind），false=全新条目 */
+  merged: boolean
+}
+
+export interface MemorySearchHit {
+  memory: MemoryEntry
+  score: number
+}
+
+export interface MemorySearchResult {
+  hits: MemorySearchHit[]
+}

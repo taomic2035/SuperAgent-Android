@@ -13,7 +13,9 @@ import { beginRun, hasResumableRun, resumeRun, finishRun, peekRun, buildResumeCo
 import { env } from "./env.ts"
 import { speak } from "./tts/index.ts"
 import { initBrainEvents, reportPromptStart, reportFinish, isStopRequested, clearStop, requestStop, requestPause, resumeFromPause } from "./ipc/brainEventReporter.ts"
-import type { AsrResult, BodyEvent, SkillListResult } from "./ipc/types.ts"
+import { buildReflector } from "./memory/reflect.ts"
+import type { Reflector } from "./memory/reflect.ts"
+import type { AsrResult, BodyEvent, MemorySearchResult, SkillListResult } from "./ipc/types.ts"
 
 const BODY_URL = env("BODY_URL", "http://127.0.0.1:8765")
 const BODY_TOKEN = env("BODY_TOKEN", "super-agent-dev")
@@ -66,6 +68,7 @@ async function main(): Promise<void> {
   // 切到 backup 后若仍绑垂死的 primary，相关性/视觉会持续失败只能靠 fail-open 硬扛）
   let relevance: ReturnType<typeof buildLlmRelevanceCheck> | undefined
   let vision: ReturnType<typeof buildLlmVisionMarks> | undefined
+  let reflector: Reflector | undefined
   function rebuildSidecars(tier: "primary" | "backup" | "local") {
     relevance =
       env("EVIDENCE_RELEVANCE", "1") === "1" && tier !== "local"
@@ -74,6 +77,11 @@ async function main(): Promise<void> {
     vision =
       env("VISION", "1") === "1" && tier === "primary" && !localOnly
         ? buildLlmVisionMarks(models, resolved.model)
+        : undefined
+    // ME-2 reflect 跟随模型链（与 relevance 同防降级脑裂）：local 闲聊不提取，ME_REFLECT=0 可关
+    reflector =
+      env("ME_REFLECT", "1") === "1" && tier !== "local"
+        ? buildReflector(models, tier === "primary" ? resolved.model : resolved.backupModel!!, body)
         : undefined
   }
   rebuildSidecars(modelTier)
@@ -86,7 +94,7 @@ async function main(): Promise<void> {
       systemPrompt: localOnly ? buildChatOnlyPrompt(persona) : buildSystemPrompt(persona, skills.skills),
       model: resolved.model,
       // BR-02.3 安全铁律：M3 本地模型不授予设备控制权（弱模型+控制权=安全反模式）
-      tools: localOnly ? [] : buildTools(body, personaConfig.personas, relevance, vision),
+      tools: localOnly ? [] : buildTools(body, personaConfig.personas, relevance, vision, reflector),
     },
     streamFn: models.streamSimple.bind(models),
     beforeToolCall,
@@ -126,7 +134,7 @@ async function main(): Promise<void> {
         // 切到 local = 离线闲聊铁律；backup 保留全部工具（仅丢视觉，工具仍可用）
         systemPrompt: modelTier === "local" ? buildChatOnlyPrompt(persona) : buildSystemPrompt(persona, skills.skills),
         model: nextModel,
-        tools: modelTier === "local" ? [] : buildTools(body, personaConfig.personas, relevance, vision),
+        tools: modelTier === "local" ? [] : buildTools(body, personaConfig.personas, relevance, vision, reflector),
       },
       streamFn: models.streamSimple.bind(models),
       beforeToolCall,
@@ -136,11 +144,20 @@ async function main(): Promise<void> {
     return true
   }
 
-  /** 带 failover 的 prompt：连续失败 ≥3 次切换模型；120s 流超时；自动注入匹配技能。 */
+  /** 带 failover 的 prompt：连续失败 ≥3 次切换模型；120s 流超时；自动注入记忆与匹配技能。 */
   async function promptAgent(input: string): Promise<void> {
     clearStop()
-    // 技能路由增强：任务输入时自动检索匹配技能并注入提示（模型不用自觉查 skill.list）
+    // ME-2 记忆注入（docs/15 §5）：每轮任务前检索 top-5 以【主人记忆】块前缀注入（fail-open）
     let enrichedInput = input
+    try {
+      const mem = await body.rpc<MemorySearchResult>("memory.search", { query: input, limit: 5 }, undefined, 5_000)
+      if (mem.hits.length > 0) {
+        const lines = mem.hits.map((h) => `- ${h.memory.topic}：${h.memory.content}（${h.memory.kind}）`).join("\n")
+        enrichedInput = `【主人记忆】以下是关于用户的长期记忆，执行任务时遵守：\n${lines}\n${enrichedInput}`
+        console.log(`[brain] 记忆注入：${mem.hits.length} 条`)
+      }
+    } catch { /* 记忆检索失败不阻塞任务 */ }
+    // 技能路由增强：任务输入时自动检索匹配技能并注入提示（模型不用自觉查 skill.list）
     try {
       const hits = await body.rpc<{ hits: Array<{ skill: { name: string; description: string } }> }>(
         "skill.search", { query: input }, undefined, 5_000,

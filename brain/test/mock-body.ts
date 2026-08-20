@@ -13,6 +13,21 @@ export function startMockBody(options: MockBodyOptions): Promise<{ port: number;
   const events: BodyEvent[] = []
   let apps = ["com.example.shop"]
   let steps = 0
+  // ME-1 mock 记忆库：行级语义对齐 body MemoryStore（合并/软删/检索命中计数）
+  interface MockMemory {
+    id: number
+    kind: string
+    topic: string
+    content: string
+    confidence: number
+    source: string
+    hits: number
+    revoked: boolean
+    createdAt: number
+    updatedAt: number
+  }
+  let nextMemoryId = 1
+  const memories: MockMemory[] = []
 
   function authOk(req: IncomingMessage): boolean {
     return req.headers.authorization === `Bearer ${token}`
@@ -151,6 +166,62 @@ export function startMockBody(options: MockBodyOptions): Promise<{ port: number;
         const p = params as { goal?: string; appPackage?: string }
         const slug = `skill-${(p.appPackage ?? "x")}-${(p.goal ?? "g").slice(0, 8)}`
         return void sendJson(res, 200, reply({ slug }))
+      }
+      case "memory.write": {
+        const p = (params as { kind?: string; topic?: string; content?: string; source?: string; confidence?: number }) ?? {}
+        if (!p.kind || !p.topic || !p.content || !p.source) {
+          return void sendJson(res, 200, fail("BAD_PARAMS", "缺少 kind/topic/content/source"))
+        }
+        if (!["fact", "preference", "lesson", "routine"].includes(p.kind)) {
+          return void sendJson(res, 200, fail("BAD_PARAMS", `kind 非法: ${p.kind}`))
+        }
+        const now = Date.now()
+        const existing = memories.find((m) => !m.revoked && m.kind === p.kind && m.topic === p.topic)
+        if (!existing) {
+          const id = nextMemoryId++
+          memories.push({ id, kind: p.kind, topic: p.topic, content: p.content, confidence: p.confidence ?? 0.5, source: p.source, hits: 0, revoked: false, createdAt: now, updatedAt: now })
+          return void sendJson(res, 200, reply({ id, merged: false }))
+        }
+        if (existing.content === p.content) {
+          existing.confidence = Math.min(1.0, existing.confidence + 0.1)
+          existing.hits += 1
+          existing.updatedAt = now
+          return void sendJson(res, 200, reply({ id: existing.id, merged: true }))
+        }
+        existing.revoked = true
+        existing.updatedAt = now
+        const id = nextMemoryId++
+        memories.push({ id, kind: p.kind, topic: p.topic, content: p.content, confidence: p.confidence ?? 0.5, source: p.source, hits: 0, revoked: false, createdAt: now, updatedAt: now })
+        return void sendJson(res, 200, reply({ id, merged: true }))
+      }
+      case "memory.search": {
+        const p = (params as { query?: string; limit?: number }) ?? {}
+        const q = p.query ?? ""
+        const limit = Math.min(20, Math.max(1, p.limit ?? 5))
+        const hits = memories
+          .filter((m) => !m.revoked && (m.topic.includes(q) || m.content.includes(q) || q.split(/\s+/).some((w) => w && (m.topic.includes(w) || m.content.includes(w)))))
+          .slice(0, limit)
+          .map((m) => {
+            m.hits += 1
+            return { memory: m, score: 0.8 }
+          })
+        return void sendJson(res, 200, reply({ hits }))
+      }
+      case "memory.revise": {
+        const p = (params as { id?: number; content?: string; source?: string }) ?? {}
+        const m = memories.find((x) => x.id === p.id)
+        if (!m) return void sendJson(res, 200, fail("NOT_FOUND", `记忆条目不存在: ${p.id}`))
+        if (p.content !== undefined) m.content = p.content
+        if (p.source !== undefined) m.source = p.source
+        m.updatedAt = Date.now()
+        return void sendJson(res, 200, reply({}))
+      }
+      case "memory.forget": {
+        const p = (params as { id?: number }) ?? {}
+        const i = memories.findIndex((x) => x.id === p.id)
+        if (i < 0) return void sendJson(res, 200, fail("NOT_FOUND", `记忆条目不存在: ${p.id}`))
+        memories.splice(i, 1)
+        return void sendJson(res, 200, reply({}))
       }
       case "hitl.confirm":
         return void sendJson(res, 200, reply({ approved: (params as { prompt?: string })?.prompt?.includes("敏感") ? false : true }))

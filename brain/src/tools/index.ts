@@ -3,7 +3,6 @@ import type { AgentTool } from "@earendil-works/pi-agent-core"
 import { getRun, setBaseline, finishRun, noteFinishRejected, markFinishVerified } from "../runState.ts"
 import { markFinishRejected } from "../guards/index.ts"
 import { verifyEvidence } from "../guards/finish.ts"
-import { redactScreen } from "../guards/redact.ts"
 import type { RelevanceCheck } from "../guards/relevance.ts"
 import type { VisionMarksFn } from "../guards/vision.ts"
 import { BodyRpcError } from "../ipc/client.ts"
@@ -15,6 +14,8 @@ import type {
   HitlAskResult,
   HitlConfirmResult,
   HitlHandoffResult,
+  MemorySearchResult,
+  MemoryWriteResult,
   SayResult,
   ScreenResult,
   SensorResult,
@@ -25,6 +26,8 @@ import type {
   VoiceprintIdentifyResult,
 } from "../ipc/types.ts"
 import type { Persona } from "../personas/promptBuilder.ts"
+import type { Reflector } from "../memory/reflect.ts"
+import { redactScreen, redactText } from "../guards/redact.ts"
 import { speak } from "../tts/index.ts"
 
 function idem(tool: string, toolCallId: string): string {
@@ -41,6 +44,7 @@ export function buildTools(
   personas: Record<string, Persona>,
   relevance?: RelevanceCheck,
   vision?: VisionMarksFn,
+  reflect?: Reflector,
 ): AgentTool<any>[] {
   const personaMap = new Map(Object.entries(personas))
 
@@ -375,6 +379,59 @@ export function buildTools(
       },
     },
     {
+      name: "memory.remember",
+      label: "记住",
+      description:
+        "把用户的稳定事实/偏好/习惯/教训写入长期记忆（用户说「记住…」「以后都…」时必须调用，这是对用户的承诺）。" +
+        "kind：fact 事实/preference 偏好/lesson 教训/routine 习惯流程；topic 是归并键（如 奶茶口味）。" +
+        "敏感信息（身份证/卡号/密码/验证码）会被拒绝入库。",
+      parameters: Type.Object({
+        kind: Type.Union([
+          Type.Literal("fact"),
+          Type.Literal("preference"),
+          Type.Literal("lesson"),
+          Type.Literal("routine"),
+        ]),
+        topic: Type.String({ description: "归并键，≤12 字（如 奶茶口味 / 快递）" }),
+        content: Type.String({ description: "记忆内容陈述句，≤60 字" }),
+      }),
+      execute: async (_id, params: any) => {
+        // ME 隐私红线（docs/15 §6）：写入前过 redact——打码命中即拒绝入库（不是入库打码版）
+        if (redactText(params.content) !== params.content || redactText(params.topic) !== params.topic) {
+          throw new Error("内容含敏感信息（身份证/卡号/密码/验证码类），不入库——请换不含敏感信息的表述")
+        }
+        const result = await body.rpc<MemoryWriteResult>("memory.write", {
+          kind: params.kind,
+          topic: params.topic,
+          content: params.content,
+          source: "user-told",
+          confidence: 1.0,
+        })
+        return {
+          content: [{ type: "text", text: result.merged ? `已更新记忆「${params.topic}」` : `已记住「${params.topic}」` }],
+          details: result,
+        }
+      },
+    },
+    {
+      name: "memory.search",
+      label: "记忆检索",
+      description: "检索长期记忆中关于用户的事实/偏好/教训（不确定用户偏好或历史约定时先查这里）。",
+      parameters: Type.Object({
+        query: Type.String({ description: "检索关键词" }),
+        limit: Type.Optional(Type.Number()),
+      }),
+      execute: async (_id, params: any) => {
+        const result = await body.rpc<MemorySearchResult>("memory.search", { query: params.query, limit: params.limit ?? 5 })
+        const text = result.hits.length
+          ? result.hits
+              .map((h) => `- ${h.memory.topic}：${h.memory.content}（${h.memory.kind}，置信${h.memory.confidence.toFixed(1)}）`)
+              .join("\n")
+          : "（无相关记忆）"
+        return { content: [{ type: "text", text }], details: result }
+      },
+    },
+    {
       name: "hitl.confirm",
       label: "请求确认",
       description:
@@ -469,6 +526,10 @@ export function buildTools(
         }
         markFinishVerified()
         finishRun("success")
+        // ME-2 反思提取（docs/15 §5）：证据核验通过后异步入库——fire-and-forget，绝不阻塞任务完成
+        if (reflect) {
+          void reflect({ goal: run.goal, summary: params.summary, tools: locatedSteps.map((s) => s.tool) })
+        }
         return {
           content: [{ type: "text", text: `任务完成：${params.summary}` }],
           details: { evidenceVerified: true, traceSteps: locatedSteps.length, learned, learnError },
