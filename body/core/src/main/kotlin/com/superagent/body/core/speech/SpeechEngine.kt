@@ -45,8 +45,9 @@ class SpeechEngine(private val context: Context) {
     @Volatile private var tts: OfflineTts? = null
     @Volatile private var extractor: SpeakerEmbeddingExtractor? = null
     @Volatile private var manager: SpeakerEmbeddingManager? = null
-    /** DS-016：vits 构造失败标记——失败后不再重试（直接 system TTS） */
-    @Volatile private var vitsFailed = false
+    /** DS-016：vits 构造失败标记——失败后不再重试（直接 system TTS）
+     * DS-016b：暂时跳过 vits 构造（native 阻塞根因未明，先用系统 TTS 通过 TC-12，P1 再修 vits） */
+    @Volatile private var vitsFailed = true  // 暂时 true：跳过 vits，直接 system TTS
     private val persisted = mutableMapOf<String, MutableList<FloatArray>>()
 
     private val playing = AtomicBoolean(false)
