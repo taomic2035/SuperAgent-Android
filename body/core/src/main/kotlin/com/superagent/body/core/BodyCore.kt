@@ -56,6 +56,8 @@ class BodyCore(
     /** AD-11：唯一动作执行入口——RPC 与回放共用，安全闸门不分散 */
     val actionExecutor = com.superagent.body.core.control.ActionExecutor(perceiver, controller, selector, sensitiveSession)
     private val server = BodyServer(events, blobsDir)
+    /** BD-11：看门狗——a11y 断连检测/通知/事件上报 */
+    private val watchdog = com.superagent.body.core.reliability.Watchdog(context, events) { a11y() != null }
     private val started = AtomicBoolean(false)
 
     fun start(): Boolean {
@@ -65,6 +67,7 @@ class BodyCore(
         // AD-11：回放与 RPC 共用唯一动作执行入口
         skills.executor = actionExecutor
         registerHandlers()
+        watchdog.start()
         runCatching { server.start() }
             .onFailure { e ->
                 started.set(false)
@@ -76,6 +79,7 @@ class BodyCore(
 
     fun stop() {
         if (!started.compareAndSet(true, false)) return
+        watchdog.stop()
         server.stopAndWait()
     }
 
