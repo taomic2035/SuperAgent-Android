@@ -14,11 +14,11 @@
         android:textStyle="bold"
         android:layout_marginBottom="8dp" />
 
-    <TextView
+    <LinearLayout
         android:id="@+id/status"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:textSize="14sp"
+        android:orientation="vertical"
         android:layout_marginBottom="24dp" />
 
     <Button
