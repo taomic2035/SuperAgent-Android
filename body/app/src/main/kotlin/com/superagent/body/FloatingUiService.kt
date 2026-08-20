@@ -45,11 +45,29 @@ class FloatingUiService : android.app.Service() {
         val bus = UiBus.events ?: run { stopSelf(); return }
         ui = UiStateController(bus)
         ui.start()
-        com.superagent.body.core.ui.UiBus.stateController = ui // U2-H04：通知兜底访问
-        ui.subscribe { snap -> android.os.Handler(mainLooper).post { render(snap) } }
+        com.superagent.body.core.ui.UiBus.stateController = ui
+        ui.subscribe { snap ->
+            android.os.Handler(mainLooper).post {
+                render(snap)
+                updateNotification(snap)
+            }
+        }
         addBall()
         addStrip()
         OverlayGate.register(hide = { hideAll() }, restore = { showCurrent() })
+    }
+
+    /** U2-H04 完整版：通知随 UI 状态实时更新（非仅构建时） */
+    private fun updateNotification(snap: UiStateController.Snapshot) {
+        val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
+        val text = ui.notificationText()
+        val notification = android.app.NotificationCompat.Builder(this, "body-service")
+            .setSmallIcon(android.R.drawable.ic_menu_compass)
+            .setContentTitle("超级AI助手")
+            .setContentText(text)
+            .setOngoing(true)
+            .build()
+        nm.notify(1001, notification)
     }
 
     override fun onDestroy() {
