@@ -7,6 +7,20 @@
 ### 已完成
 
 
+**DS-012/013 终修 + Plan C 兜底 + VAD/Barge-in + P1 启动（2026-08-20 下午 76 项）**
+
+- **DS-012/013 TTS 终修链**：全量文件落盘→newFromFile SIGSEGV→混合路径（asset model+file fst）+ Plan C 系统 TTS 兜底
+- **P0 麦克风前台类型**：BodyService foregroundServiceType 加 microphone
+- **VAD + Barge-in 全链路**（AD-12）：StreamingRecorder+VadEngine+say()监听→interrupt→brain
+- **技能路由自动注入**：promptAgent 前自动 skill.search
+- **PAUSING 三态**（I3）：暂停≠停止；面板继续/停止/关闭
+- **UX-01 首启产品化**：按序检查四项就绪
+- **性能**：perceive 缓存+剪枝+CRC32；ASR 500ms；RPC 重试
+- **测试**：109 项四层 CI+Watchdog 4+ActionGate 9
+- **P1**：docs/14 复盘+AD-12 VAD+AD-13 KWS
+- **TC-11 ASR 20/20 PASS 100%**
+
+
 **全自主推进批次（2026-08-20 上午 33 项）**
 
 - **copyAssetsDir 真正根因修复**（DS-005）：assets.list(file) 返回空数组非 null → `!= null` 恒 true → 文件全被当目录拷空目录。改为先试 assets.open()（能开=文件）。此 bug 同时影响 espeak-ng-data
