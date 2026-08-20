@@ -86,12 +86,20 @@ class SpeechEngine(private val context: Context) {
         assets.list(assetPath)?.forEach { name ->
             val childAsset = "$assetPath/$name"
             val childTarget = File(target, name)
-            if (assets.list(childAsset) != null) {
-                copyAssetsDir(childAsset, childTarget)
-            } else {
+            // DS-005 真正根因：assets.list(file) 返回空数组（非 null）→ `!= null` 恒 true
+            // → 所有文件都被当目录→创建了空目录而非复制文件。修复：先试 open（能开=文件）。
+            val isFile = try {
+                assets.open(childAsset).close()
+                true
+            } catch (_: Exception) {
+                false
+            }
+            if (isFile) {
                 assets.open(childAsset).use { input ->
                     childTarget.outputStream().use { output -> input.copyTo(output) }
                 }
+            } else {
+                copyAssetsDir(childAsset, childTarget)
             }
         }
     }
