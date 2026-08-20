@@ -15,9 +15,9 @@
 - [x] TC-14 ✅（断点续跑）
 - [x] G5 交互绿 ◐（用户确认通过）
 - [x] 文档全对齐（README/CONTRIBUTING/CHANGELOG/docs 00-14/release notes）
-- [ ] **TC-12 TTS 人评通过**（等 DS-012 修复复验）
+- [x] **TC-12 TTS 人评通过**（10/10，可懂率 100%，质量 5/5——2026-08-20 用户确认；正式链三层播报同日上线：在线 edge 主路真机 1.0-1.5s）
 - [ ] TC-13 声纹真人贴麦复测（可选——enroll ✅）
-- [ ] P4 语音版 TC-07（等 TTS + microphone 前台类型）
+- [ ] P4 语音版 TC-07（播报链已就绪，需用户在场）
 - [ ] 性能基准实测（等设备空闲）
 - [ ] v1.0 验收报告终版（等人评数据填入）
 
@@ -41,7 +41,7 @@ gh release create v0.1.0 --title "v0.1.0 - P0 最小闭环" --notes-file docs/re
 
 ## 已知限制（release notes 中注明）
 
-- TTS 流式回调需 sherpa 侧修复（当前用全量生成，首包 ~300-500ms）
+- sherpa 离线 TTS 在部分华为真机构造失败（DS-015/017）——离线播报暂走系统 TTS；在线链（edge/azure 主路）不受影响
 - 华为设备可能杀后台进程（看门狗+heartbeat 检测，但无法绕过系统限制）
 - 声纹 identify 需真人贴麦（扬声器重放频响损失影响匹配）
 - 视觉 L1 需 SAW+MediaProjection 授权（未授权自动回退 a11y）

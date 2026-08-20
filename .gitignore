@@ -39,8 +39,15 @@ body/app/src/main/assets/sherpa/
 *.onnx
 *.tar.bz2
 *.wav
+*.mp3
+*.m4a
+*.ogg
 *.apk
 *.aar
+
+# 临时验证脚本（会话内调试用，用完即移 d:\tmp）
+brain/.tmp-*
+**/.tmp-*
 
 # 本地临时辅助脚本（多 agent 协作工具，非工程内容）
 scripts/handoff-watch.ps1
