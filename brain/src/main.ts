@@ -169,6 +169,7 @@ async function main(): Promise<void> {
   const eventPump = async (): Promise<void> => {
     let lastEventSeq = 0
     let lastHeartbeat = Date.now()
+    let lastConsumedTextInputId = ""
     // U2-#32：首次启动跳过历史事件（brain 重启不得重放旧指令——设水位为当前最大 seq）
     try {
       const existing = await body.events(0)
@@ -185,7 +186,6 @@ async function main(): Promise<void> {
         await sleep(3000)
         continue
       }
-      // U2-B04：心跳 5s 一次，独立于 prompt 循环
       if (Date.now() - lastHeartbeat > 5000) {
         lastHeartbeat = Date.now()
         void body.rpc("brain.event", {
@@ -198,6 +198,10 @@ async function main(): Promise<void> {
         if (ev.type !== "voice") continue
         const kind = (ev.payload as Record<string, unknown>)?.kind
         if (kind === "text_input") {
+          // UX-02 §5.2.4 契约：同一指令只入队一次——用事件 seq 作为 commandId 去重
+          const commandId = `ev-${ev.seq}`
+          if (commandId === lastConsumedTextInputId) continue
+          lastConsumedTextInputId = commandId
           const text = String((ev.payload as Record<string, unknown>)?.text ?? "").trim()
           if (text) {
             console.log(`你(输入)> ${text}`)
