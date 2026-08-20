@@ -52,6 +52,11 @@ class SpeechEngine(private val context: Context) {
 
     private val recorder = AudioRecorder(File(context.cacheDir, "audio"))
 
+    /** AD-12：Barge-in 基础设施——VAD 引擎 + 流式录音器（TTS 播放中检测用户说话） */
+    val vadEngine by lazy { VadEngine(context) }
+    private var bargeInRecorder: StreamingRecorder? = null
+    private var onBargeIn: (() -> Unit)? = null
+
     /** VITS 的 jieba dict 必须落盘（同 espeak：sherpa 只能从文件系统读目录），首次使用时复制。
      * DS-005 修复：守卫从 target.exists() 改为检查 jieba.dict.utf8 具体文件——半成品目录自动重拷。 */
     private val vitsDictDir: String by lazy {
@@ -158,8 +163,10 @@ class SpeechEngine(private val context: Context) {
                 try {
                     track.play()
                     val sid = voice?.speakerId ?: 0
-                    // P1 流式：sherpa Tts.kt 已修回调签名 Int→Int?（vendored，DS-007/010 根治）
-                    // 恢复 generateWithCallback（首包 ~100ms）；如真机仍异常回退 generate() 全量版
+                    // AD-12 Barge-in：TTS 播放时启动 VAD 监听（用户开口 → interrupt → 播放停止 ≤300ms）
+                    if (vadEngine.isReady()) {
+                        startBargeInListener { interrupt() }
+                    }
                     val callback = object : Function1<FloatArray, Int?> {
                         override fun invoke(samples: FloatArray): Int? {
                             if (!playing.get()) return 1
@@ -171,6 +178,7 @@ class SpeechEngine(private val context: Context) {
                     }
                     t.generateWithCallback(text, sid, voice?.speed ?: 1.0f, callback)
                 } finally {
+                    stopBargeInListener() // AD-12：播放结束停 VAD（省电）
                     runCatching { track.stop() }
                     runCatching { track.release() }
                     if (activeTrack === track) activeTrack = null
@@ -202,6 +210,28 @@ class SpeechEngine(private val context: Context) {
             runCatching { it.release() }
         }
         activeTrack = null
+        stopBargeInListener()
+    }
+
+    /** AD-12：开始监听用户说话（TTS 播放时调用——用户开口 ≤300ms 触发 onBargeIn） */
+    fun startBargeInListener(callback: () -> Unit) {
+        if (!vadEngine.isReady()) return
+        stopBargeInListener()
+        onBargeIn = callback
+        bargeInRecorder = StreamingRecorder().also { recorder ->
+            recorder.start { samples ->
+                if (vadEngine.process(samples) == VadEngine.VadEvent.SPEECH_START) {
+                    Log.i("SpeechEngine", "Barge-in detected → interrupt TTS")
+                    callback()
+                }
+            }
+        }
+    }
+
+    fun stopBargeInListener() {
+        bargeInRecorder?.stop()
+        bargeInRecorder = null
+        onBargeIn = null
     }
 
     fun enroll(name: String, samples: Int = 3): VoiceprintEnrollResult {
