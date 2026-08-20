@@ -17,6 +17,8 @@ import kotlin.math.abs
 class OptionSelector(
     private val perceiver: ScreenPerceiver,
     private val controller: Controller,
+    /** AUDIT-01：内部 tap（verifySelected 分支）也须经闸门——不因 Kotlin 层直调绕过坐标校验 */
+    private val sensitive: com.superagent.body.core.security.SensitiveSessionTracker? = null,
 ) {
 
     /**
@@ -49,6 +51,11 @@ class OptionSelector(
         }
         if (verifySelected) {
             val before = perceiver.perceive("a11y").signature
+            // AUDIT-01：内部 tap 前做坐标闸门（不因 Kotlin 直调绕过）
+            if (sensitive != null) {
+                val v = com.superagent.body.core.security.ActionGate.violatingLabel(perceiver, sensitive, target.center.x, target.center.y)
+                if (v != null) return ActionResult(false, null, "GATE_BLOCKED:${v.label}")
+            }
             controller.tap(target.center.x, target.center.y)
             delay(300)
             val after = perceiver.perceive("a11y").signature

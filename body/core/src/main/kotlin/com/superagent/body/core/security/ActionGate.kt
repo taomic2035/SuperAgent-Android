@@ -21,10 +21,15 @@ object ActionGate {
      * 落点 (x,y) 是否命中提交边界或敏感会话动作。
      * - 任一包含节点命中提交边界词 → Commit（坐标点击不可绕过）
      * - 敏感会话内任一包含节点命中敏感动作词 → SensitiveSession（需 hitl.confirm action 放行）
-     * - 感知失败/无节点 → null 放行（闸门不因感知故障误伤正常操控）
+     * - 感知失败：**敏感会话内 fail-closed**（审计 AUDIT-03：a11y 崩溃窗口内支付红线不能失效）；
+     *   非敏感会话 fail-open（正常操控不因感知故障误伤）
      */
     fun violatingLabel(perceiver: ScreenPerceiver, sensitive: SensitiveSessionTracker, x: Int, y: Int): Violation? {
-        val nodes = runCatching { perceiver.perceive("a11y").nodes }.getOrNull() ?: return null
+        val nodes = runCatching { perceiver.perceive("a11y").nodes }.getOrNull()
+        if (nodes == null) {
+            // AUDIT-03：敏感会话内感知失败 = 拦截（误拦 tap 代价远低于误放支付 tap）
+            return if (sensitive.inSensitiveSession) Violation.Commit("(感知失败·敏感会话内拦截)") else null
+        }
         val hits = nodes.filter { it.bounds.left <= x && x <= it.bounds.right && it.bounds.top <= y && y <= it.bounds.bottom }
         if (hits.isEmpty()) return null
         hits.firstOrNull { CommitBoundaryGuard.isCommitBoundary(it.label) }
