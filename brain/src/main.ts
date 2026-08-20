@@ -160,6 +160,14 @@ async function main(): Promise<void> {
   const eventPump = async (): Promise<void> => {
     let lastEventSeq = 0
     let lastHeartbeat = Date.now()
+    // U2-#32：首次启动跳过历史事件（brain 重启不得重放旧指令——设水位为当前最大 seq）
+    try {
+      const existing = await body.events(0)
+      if (existing.length > 0) {
+        lastEventSeq = Math.max(...existing.map((e) => e.seq))
+        console.log(`[brain] 跳过 ${existing.length} 条历史事件（水位 ${lastEventSeq}）`)
+      }
+    } catch { /* body 不可达时 waitForBody 会重试 */ }
     for (;;) {
       let events: BodyEvent[] = []
       try {

@@ -52,11 +52,17 @@ class SpeechEngine(private val context: Context) {
 
     private val recorder = AudioRecorder(File(context.cacheDir, "audio"))
 
-    /** VITS 的 jieba dict 必须落盘（同 espeak：sherpa 只能从文件系统读目录），首次使用时复制。 */
+    /** VITS 的 jieba dict 必须落盘（同 espeak：sherpa 只能从文件系统读目录），首次使用时复制。
+     * DS-005 修复：守卫从 target.exists() 改为检查 jieba.dict.utf8 具体文件——半成品目录自动重拷。 */
     private val vitsDictDir: String by lazy {
         val target = File(context.filesDir, "sherpa/vits-dict")
         val src = "sherpa/models/vits-zh-hf-fanchen-C/dict"
-        if (!target.exists() && hasAssetDir(src)) copyAssetsDir(src, target)
+        val sentinel = File(target, "jieba.dict.utf8")
+        if (!sentinel.isFile && hasAssetDir(src)) {
+            if (target.exists()) target.deleteRecursively() // 清半成品
+            copyAssetsDir(src, target)
+        }
+        android.util.Log.i("SpeechEngine", "vitsDictDir=${target.absolutePath} jieba=${sentinel.isFile} files=${target.list()?.size ?: 0}")
         target.absolutePath
     }
 
@@ -269,8 +275,17 @@ class SpeechEngine(private val context: Context) {
             val vitsDir = "sherpa/models/vits-zh-hf-fanchen-C"
             if (hasAsset("$vitsDir/model.onnx")) {
                 val dictDir = vitsDictDir
-                if (!File(dictDir, "jieba.dict.utf8").isFile) {
-                    throw SpeechUnavailable("vits jieba dict 不完整（拷贝失败或包内缺数据）")
+                val jiebaFile = File(dictDir, "jieba.dict.utf8")
+                if (!jiebaFile.isFile) {
+                    // DS-005：强制重拷一次（lazy 守卫可能因时序/半成品漏拷）
+                    val target = File(context.filesDir, "sherpa/vits-dict")
+                    target.deleteRecursively()
+                    val src = "$vitsDir/dict"
+                    if (hasAssetDir(src)) copyAssetsDir(src, target)
+                    if (!File(target, "jieba.dict.utf8").isFile) {
+                        android.util.Log.e("SpeechEngine", "vits dict 重拷后仍缺 jieba.dict.utf8；dir=${target.absolutePath} files=${target.list()?.joinToString(",")}")
+                        throw SpeechUnavailable("vits jieba dict 不完整（拷贝失败或包内缺数据）")
+                    }
                 }
                 val config = OfflineTtsConfig(
                     model = OfflineTtsModelConfig(

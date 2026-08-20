@@ -191,12 +191,8 @@ class FloatingUiService : android.app.Service() {
 
     private fun render(snap: UiStateController.Snapshot) {
         strip?.let { s ->
-            val show = snap.state in setOf(
-                UiStateController.UiState.THINKING, UiStateController.UiState.RUNNING,
-                UiStateController.UiState.PAUSING, UiStateController.UiState.AWAITING_CONFIRM,
-                UiStateController.UiState.BLOCKED, UiStateController.UiState.COMPLETED,
-                UiStateController.UiState.FAILED, UiStateController.UiState.IDLE,
-            )
+            // U2-#33/#34：所有非 MINI 状态都应可见（含 OFFLINE/STOPPED——离线反馈是 UX-11 判据）
+            val show = snap.state !in setOf(UiStateController.UiState.MINI)
             s.visibility = if (show) View.VISIBLE else View.GONE
             s.text = "${stateLabel(snap.state)}${if (snap.currentStep.isBlank()) "" else " · ${snap.currentStep}"}"
         }
