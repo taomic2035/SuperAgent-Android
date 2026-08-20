@@ -14,7 +14,7 @@ import kotlin.math.abs
 class AudioRecorder(private val outDir: File, private val sampleRate: Int = 16000) {
     data class Recording(val wavFile: File, val durationMs: Long)
 
-    fun record(silenceMs: Long = 1200, maxMs: Long = 15_000): Recording {
+    fun record(silenceMs: Long = 500, maxMs: Long = 15_000): Recording {
         outDir.mkdirs()
         val minBuf = AudioRecord.getMinBufferSize(
             sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
