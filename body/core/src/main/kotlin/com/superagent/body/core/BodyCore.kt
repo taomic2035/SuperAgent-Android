@@ -24,6 +24,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -54,6 +55,10 @@ class BodyCore(
     private val hardware = HardwareService(context)
     private val hitl = Hitl(context, events)
     private val skills = SkillStore(File(context.filesDir, "skills"), perceiver, selector, controller, events, sensitiveSession)
+    /** ME-1 记忆库（docs/15）：body 侧 SQLite 权威存储，brain 经 4 个 memory.* RPC 读写 */
+    private val memories = com.superagent.body.core.memory.MemoryStore(
+        com.superagent.body.core.memory.AndroidSqliteMemoryDb(context),
+    )
     private val blobsDir = File(context.filesDir, "blobs")
     private val screenshots = com.superagent.body.core.screenshot.ScreenshotService(context).also {
         com.superagent.body.core.screenshot.ScreenshotService.shared = it
@@ -390,6 +395,43 @@ class BodyCore(
                 )
         }
 
+        // ME-1 记忆四件套（docs/15 §4）：写入路径在 brain（remember 工具/reflect），body 只管存储与合并语义
+        server.rpc("memory.write") { req ->
+            val p = params(req)
+            val kind = p.string("kind") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 kind")
+            val topic = p.string("topic") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 topic")
+            val content = p.string("content") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 content")
+            val source = p.string("source") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 source")
+            runCatching {
+                memories.write(kind, topic, content, source, (p.json.get("confidence")?.jsonPrimitive?.doubleOrNull ?: 0.5))
+            }.fold(
+                { ok(req, it) },
+                { e -> bad(req, if (e is IllegalArgumentException) "BAD_PARAMS" else "MEMORY_STORE", e.message ?: "写入失败") },
+            )
+        }
+
+        server.rpc("memory.search") { req ->
+            val p = params(req)
+            val query = p.string("query") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 query")
+            ok(req, memories.search(query, p.int("limit") ?: 5))
+        }
+
+        server.rpc("memory.revise") { req ->
+            val p = params(req)
+            val id = p.long("id") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 id")
+            val content = p.string("content") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 content")
+            runCatching { memories.revise(id, content, p.string("source")) }
+                .fold(
+                    { found -> if (found) emptyOk(req) else bad(req, "NOT_FOUND", "记忆条目不存在: $id") },
+                    { e -> bad(req, if (e is IllegalArgumentException) "BAD_PARAMS" else "MEMORY_STORE", e.message ?: "修订失败") },
+                )
+        }
+
+        server.rpc("memory.forget") { req ->
+            val id = params(req).long("id") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 id")
+            if (memories.forget(id)) emptyOk(req) else bad(req, "NOT_FOUND", "记忆条目不存在: $id")
+        }
+
         server.rpc("hitl.confirm", HITL_RPC_TIMEOUT_MS) { req ->
             val p = params(req)
             val prompt = p.string("prompt") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 prompt")
@@ -473,6 +515,7 @@ class BodyCore(
         val json: JsonObject get() = obj
         fun string(key: String): String? = obj[key]?.jsonPrimitive?.contentOrNull
         fun int(key: String): Int? = obj[key]?.jsonPrimitive?.contentOrNull?.toIntOrNull()
+        fun long(key: String): Long? = obj[key]?.jsonPrimitive?.contentOrNull?.toLongOrNull()
         fun near(): PointArg? {
             val near = obj["near"] ?: return null
             val o = near.jsonObject

@@ -224,3 +224,41 @@ data class BrainEvent(
     val resultKind: String? = null,
     val timestamp: Long,
 )
+
+/** ME-1 记忆条目（docs/15 §4）：body 侧 SQLite files/memory.db 权威存储，brain 只经 RPC 读写 */
+@Serializable
+data class MemoryEntry(
+    val id: Long,
+    /** fact 事实 | preference 偏好 | lesson 教训 | routine 习惯流程 */
+    val kind: String,
+    /** 归并键（如 奶茶口味 / 快递 / 美团滑块）——同 topic 同 kind 去重合并 */
+    val topic: String,
+    val content: String,
+    /** 命中/时长加权：同内容重述 +0.1（cap 1.0），冲突时新覆盖旧 */
+    val confidence: Double,
+    /** run:<goal摘要> | user-told | reflection | gate-lesson */
+    val source: String,
+    val hits: Int = 0,
+    /** 软删（修订留痕）：被同 topic 新版顶掉的旧条目 revoked=1，检索不可见 */
+    val revoked: Boolean = false,
+    val createdAt: Long,
+    val updatedAt: Long,
+)
+
+@Serializable
+data class MemoryWriteResult(
+    val id: Long,
+    /** true=与既有记忆合并/顶替（同 topic 同 kind），false=全新条目 */
+    val merged: Boolean,
+)
+
+@Serializable
+data class MemorySearchHit(
+    val memory: MemoryEntry,
+    val score: Double,
+)
+
+@Serializable
+data class MemorySearchResult(
+    val hits: List<MemorySearchHit>,
+)
