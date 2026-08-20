@@ -376,42 +376,60 @@ class SpeechEngine(private val context: Context) {
             // ——存在即优先，Kokoro 全缺才返回 null。
             val vitsDir = "sherpa/models/vits-zh-hf-fanchen-C"
             if (hasAsset("$vitsDir/model.onnx")) {
-                // DS-013：newFromFile SIGSEGV（JNI 契约不匹配）→ 回退 asset 构造。
-                // DS-012 根因定位：sherpa C++ 的 OpenFST 只支持真实文件路径（不支持 assets），
-                // 所以 fst 必须用绝对路径，model/lexicon/tokens 可以走 assets（mmap 正常）。
+                // DS-015：assets mmap 在华为阻塞 → 全量文件路径（model 也落盘）
+                // DS-013 教训：OfflineTts(null, config) SIGSEGV → 仍传 assets（非 null）
+                //   但 config 内所有路径指向 filesDir 绝对路径（C++ 检测到绝对路径走标准 I/O）
                 val fileDir = vitsFileDir
+                val modelFile = File(fileDir, "model.onnx")
+                val lexiconFile = File(fileDir, "lexicon.txt")
+                val tokensFile = File(fileDir, "tokens.txt")
                 val dictDir = File(fileDir, "dict").absolutePath
-                if (!File(dictDir, "jieba.dict.utf8").isFile) {
-                    throw SpeechUnavailable("vits jieba dict 不完整")
+                if (!modelFile.isFile || !lexiconFile.isFile || !tokensFile.isFile) {
+                    logTtsError("vits files incomplete", extra = "dir=$fileDir files=${File(fileDir).list()?.joinToString(",")}")
+                    throw SpeechUnavailable("vits 文件不完整（model/lexicon/tokens 缺失）")
                 }
-                // fst 用绝对路径（OpenFST 需要真实文件）——拷到 filesDir
                 val fstPaths = listOf("phone.fst", "date.fst", "number.fst", "new_heteronym.fst")
                     .map { File(fileDir, it) }
                     .filter { it.isFile }
                     .joinToString(",") { it.absolutePath }
-                android.util.Log.i("SpeechEngine", "vits hybrid init: model=$vitsDir/model.onnx (asset) fst=$fstPaths (file)")
+                logTtsError("vits all-file init", extra = "model=${modelFile.absolutePath} lexicon=${lexiconFile.absolutePath} tokens=${tokensFile.absolutePath} dict=$dictDir fst=$fstPaths")
                 val config = OfflineTtsConfig(
                     model = OfflineTtsModelConfig(
                         vits = OfflineTtsVitsModelConfig(
-                            model = "$vitsDir/model.onnx",          // asset 路径（mmap 正常）
-                            lexicon = "$vitsDir/lexicon.txt",        // asset 路径
-                            tokens = "$vitsDir/tokens.txt",          // asset 路径
-                            dataDir = dictDir,                       // 文件路径（jieba）
+                            model = modelFile.absolutePath,      // 全部绝对文件路径
+                            lexicon = lexiconFile.absolutePath,
+                            tokens = tokensFile.absolutePath,
+                            dataDir = dictDir,
                         ),
                         numThreads = 4,
                     ),
-                    ruleFsts = fstPaths,                              // 绝对文件路径（OpenFST）
+                    ruleFsts = fstPaths,
                     ruleFars = "",
                     maxNumSentences = 1,
                 )
-                logTtsError("vits constructing", extra = "config model=${config.model.vits.model} lexicon=${config.model.vits.lexicon} fst=${config.ruleFsts}")
+                // DS-015：构造超时保护（10s）——华为 assets mmap 可能无限阻塞
+                val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+                val future = executor.submit<OfflineTts> {
+                    try {
+                        OfflineTts(assets, config)  // 传 assets（非 null）但路径全是文件绝对路径
+                    } catch (e: Exception) {
+                        logTtsError("vits constructor threw", e)
+                        throw e
+                    }
+                }
                 val engine = try {
-                    OfflineTts(assets, config)
+                    future.get(10, java.util.concurrent.TimeUnit.SECONDS)
+                } catch (e: java.util.concurrent.TimeoutException) {
+                    future.cancel(true)
+                    executor.shutdownNow()
+                    logTtsError("vits constructor TIMEOUT (10s)", extra = "likely assets mmap blocked on Huawei")
+                    throw SpeechUnavailable("vits 构造超时（华为 assets mmap 阻塞）")
                 } catch (e: Exception) {
-                    logTtsError("vits constructor FAILED", e, "config above")
+                    executor.shutdownNow()
                     throw e
                 }
-                logTtsError("vits constructed OK, sampleRate=${engine.sampleRate()}")
+                executor.shutdown()
+                logTtsError("vits constructed OK", extra = "sampleRate=${engine.sampleRate()} speakers=${engine.numSpeakers()}")
                 return engine.also { tts = it }
             }
             // G3.1：int8 优先（fp32 实测 PSS 尖峰 808MB → native exit(1)；
