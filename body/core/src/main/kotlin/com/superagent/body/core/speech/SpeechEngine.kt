@@ -158,16 +158,18 @@ class SpeechEngine(private val context: Context) {
                 try {
                     track.play()
                     val sid = voice?.speakerId ?: 0
-                    // DS-010 终修：generateWithCallback 的 JNI 桥无论 lambda/匿名类都签名不匹配
-                    // （JNI 期望 invoke([F)Ljava/lang/Integer;，Kotlin 声明返回 primitive int）。
-                    // 改用 generate()（无回调，全量生成后一次写入）——零风险，首包 ~300-500ms 可接受。
-                    // 若需恢复流式：需修改 sherpa Tts.kt 声明为 Int? 或提供 Java 接口适配层。
-                    val audio = t.generate(text, sid, voice?.speed ?: 1.0f)
-                    if (playing.get() && audio.samples.isNotEmpty()) {
-                        val pcm = ShortArray(audio.samples.size)
-                        for (i in audio.samples.indices) pcm[i] = (audio.samples[i] * 32767).toInt().toShort()
-                        track.write(pcm, 0, pcm.size)
+                    // P1 流式：sherpa Tts.kt 已修回调签名 Int→Int?（vendored，DS-007/010 根治）
+                    // 恢复 generateWithCallback（首包 ~100ms）；如真机仍异常回退 generate() 全量版
+                    val callback = object : Function1<FloatArray, Int?> {
+                        override fun invoke(samples: FloatArray): Int? {
+                            if (!playing.get()) return 1
+                            val pcm = ShortArray(samples.size)
+                            for (i in samples.indices) pcm[i] = (samples[i] * 32767).toInt().toShort()
+                            track.write(pcm, 0, pcm.size)
+                            return 1
+                        }
                     }
+                    t.generateWithCallback(text, sid, voice?.speed ?: 1.0f, callback)
                 } finally {
                     runCatching { track.stop() }
                     runCatching { track.release() }
