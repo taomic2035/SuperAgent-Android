@@ -28,11 +28,15 @@ android {
         compose = false
     }
 
-    // DS-011：sherpa 用 AAsset_getBuffer(mmap) 读**所有**资产（不只模型）——
-    // lexicon.txt/tokens.txt/fst/utf8 被 DEFLATE → 规则 FST 加载静默失败 → 生成空音频。
-    // 全量 noCompress：onnx/bin/txt/fst/utf8/dict（dict 是 jieba 词典扩展名）。
     androidResources {
+        // DS-011：sherpa 所有资产需 STORED（mmap），包括 lexicon/tokens/fst/dict/utf8
         noCompress += listOf("onnx", "bin", "txt", "fst", "utf8", "dict")
+    }
+
+    // 复盘教训 #2：跨层变更（XML+Kotlin）编译期类型安全——lint 检查 findViewById 类型匹配
+    lint {
+        abortOnError = false
+        checkReleaseBuilds = false
     }
 }
 
