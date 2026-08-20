@@ -14,7 +14,8 @@
     "live-glm": "tsx test/live-glm.ts",
     "typecheck": "tsc --noEmit",
     "start": "tsx src/main.ts",
-    "contract": "tsx test/contract.ts"
+    "contract": "tsx test/contract.ts",
+    "integration": "tsx test/integration.ts"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "latest",
