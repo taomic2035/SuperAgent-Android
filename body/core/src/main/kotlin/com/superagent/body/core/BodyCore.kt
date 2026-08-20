@@ -44,7 +44,12 @@ class BodyCore(
     private val controller = Controller(context, a11y)
     private val sensitiveSession = com.superagent.body.core.security.SensitiveSessionTracker()
     private val selector = OptionSelector(perceiver, controller, sensitiveSession)
-    private val speech = SpeechEngine(context)
+    private val speech = SpeechEngine(context).also {
+        // AD-12：barge-in 事件 → EventBus → brain（"用户打断了播报"）
+        it.onBargeInEvent = {
+            events.emit("voice", buildJsonObject { put("kind", "barge_in") })
+        }
+    }
     private val voiceLoop = com.superagent.body.core.voice.VoiceLoop(context, events)
     private val hardware = HardwareService(context)
     private val hitl = Hitl(context, events)

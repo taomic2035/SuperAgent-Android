@@ -55,6 +55,8 @@ class SpeechEngine(private val context: Context) {
     /** AD-12：Barge-in 基础设施——VAD 引擎 + 流式录音器（TTS 播放中检测用户说话） */
     val vadEngine by lazy { VadEngine(context) }
     private var bargeInRecorder: StreamingRecorder? = null
+    /** AD-12：barge-in 事件回调（BodyCore 注入——emit 到 EventBus 通知 brain） */
+    var onBargeInEvent: (() -> Unit)? = null
     private var onBargeIn: (() -> Unit)? = null
 
     /** DS-012：vits 全量文件落盘——sherpa 从 assets 读 .txt/.fst 可能失败（mmap 路径不匹配），
@@ -165,7 +167,10 @@ class SpeechEngine(private val context: Context) {
                     val sid = voice?.speakerId ?: 0
                     // AD-12 Barge-in：TTS 播放时启动 VAD 监听（用户开口 → interrupt → 播放停止 ≤300ms）
                     if (vadEngine.isReady()) {
-                        startBargeInListener { interrupt() }
+                        startBargeInListener {
+                            interrupt()
+                            onBargeInEvent?.invoke()  // AD-12：通知 EventBus → brain
+                        }
                     }
                     val callback = object : Function1<FloatArray, Int?> {
                         override fun invoke(samples: FloatArray): Int? {
