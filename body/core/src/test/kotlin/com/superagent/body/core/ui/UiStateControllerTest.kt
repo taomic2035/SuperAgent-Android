@@ -123,4 +123,11 @@ class UiStateControllerTest {
         }
         assertEquals(5, controller.snapshot().recentSteps.size, "最近步骤不超过 5 条")
     }
+
+    @Test
+    fun `stop 后事件不再被消费（U2-H05）`() {
+        controller.stop()
+        emitBrain("task-1", 1L, "prompt_start", "停止后的事件")
+        assertEquals(UiStateController.UiState.OFFLINE, controller.state)
+    }
 }
