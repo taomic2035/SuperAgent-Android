@@ -57,17 +57,17 @@ class SpeechEngine(private val context: Context) {
     private var bargeInRecorder: StreamingRecorder? = null
     private var onBargeIn: (() -> Unit)? = null
 
-    /** VITS 的 jieba dict 必须落盘（同 espeak：sherpa 只能从文件系统读目录），首次使用时复制。
-     * DS-005 修复：守卫从 target.exists() 改为检查 jieba.dict.utf8 具体文件——半成品目录自动重拷。 */
-    private val vitsDictDir: String by lazy {
-        val target = File(context.filesDir, "sherpa/vits-dict")
-        val src = "sherpa/models/vits-zh-hf-fanchen-C/dict"
-        val sentinel = File(target, "jieba.dict.utf8")
+    /** DS-012：vits 全量文件落盘——sherpa 从 assets 读 .txt/.fst 可能失败（mmap 路径不匹配），
+     * 全部拷到 filesDir 后用文件路径初始化（同 jieba dict 法，彻底绕开 assets 路径）。 */
+    private val vitsFileDir: String by lazy {
+        val target = File(context.filesDir, "sherpa/vits")
+        val src = "sherpa/models/vits-zh-hf-fanchen-C"
+        val sentinel = File(target, "model.onnx")
         if (!sentinel.isFile && hasAssetDir(src)) {
-            if (target.exists()) target.deleteRecursively() // 清半成品
+            if (target.exists()) target.deleteRecursively()
             copyAssetsDir(src, target)
         }
-        android.util.Log.i("SpeechEngine", "vitsDictDir=${target.absolutePath} jieba=${sentinel.isFile} files=${target.list()?.size ?: 0}")
+        android.util.Log.i("SpeechEngine", "vitsFileDir=${target.absolutePath} model=${sentinel.isFile} files=${target.list()?.size ?: 0}")
         target.absolutePath
     }
 
@@ -315,34 +315,37 @@ class SpeechEngine(private val context: Context) {
             // ——存在即优先，Kokoro 全缺才返回 null。
             val vitsDir = "sherpa/models/vits-zh-hf-fanchen-C"
             if (hasAsset("$vitsDir/model.onnx")) {
-                val dictDir = vitsDictDir
-                val jiebaFile = File(dictDir, "jieba.dict.utf8")
-                if (!jiebaFile.isFile) {
-                    // DS-005：强制重拷一次（lazy 守卫可能因时序/半成品漏拷）
-                    val target = File(context.filesDir, "sherpa/vits-dict")
-                    target.deleteRecursively()
-                    val src = "$vitsDir/dict"
-                    if (hasAssetDir(src)) copyAssetsDir(src, target)
-                    if (!File(target, "jieba.dict.utf8").isFile) {
-                        android.util.Log.e("SpeechEngine", "vits dict 重拷后仍缺 jieba.dict.utf8；dir=${target.absolutePath} files=${target.list()?.joinToString(",")}")
-                        throw SpeechUnavailable("vits jieba dict 不完整（拷贝失败或包内缺数据）")
-                    }
+                // DS-012：全量文件落盘——sherpa 从 assets 读 .txt/.fst 失败（mmap 路径不匹配），
+                // 全部拷到 filesDir 后用**文件绝对路径**初始化（彻底绕开 assets 路径）
+                val fileDir = vitsFileDir
+                val modelFile = File(fileDir, "model.onnx")
+                val lexiconFile = File(fileDir, "lexicon.txt")
+                val tokensFile = File(fileDir, "tokens.txt")
+                val dictDir = File(fileDir, "dict").absolutePath
+                if (!modelFile.isFile || !lexiconFile.isFile || !tokensFile.isFile) {
+                    android.util.Log.e("SpeechEngine", "vits 文件落盘不完整 dir=$fileDir files=${File(fileDir).list()?.joinToString(",")}")
+                    throw SpeechUnavailable("vits 文件不完整（model/lexicon/tokens 缺失）")
                 }
+                val fstPaths = listOf("phone.fst", "date.fst", "number.fst", "new_heteronym.fst")
+                    .map { File(fileDir, it).absolutePath }
+                    .filter { File(it).isFile }
+                    .joinToString(",")
+                android.util.Log.i("SpeechEngine", "vits file-based init: model=${modelFile.absolutePath} lexicon=${lexiconFile.absolutePath} fst=$fstPaths")
                 val config = OfflineTtsConfig(
                     model = OfflineTtsModelConfig(
                         vits = OfflineTtsVitsModelConfig(
-                            model = "$vitsDir/model.onnx",
-                            lexicon = "$vitsDir/lexicon.txt",
-                            tokens = "$vitsDir/tokens.txt",
+                            model = modelFile.absolutePath,
+                            lexicon = lexiconFile.absolutePath,
+                            tokens = tokensFile.absolutePath,
                             dataDir = dictDir,
                         ),
                         numThreads = 4,
                     ),
-                    ruleFsts = "$vitsDir/phone.fst,$vitsDir/date.fst,$vitsDir/number.fst,$vitsDir/new_heteronym.fst",
+                    ruleFsts = fstPaths,
                     ruleFars = "",
                     maxNumSentences = 1,
                 )
-                return OfflineTts(assets, config).also { tts = it }
+                return OfflineTts(null, config).also { tts = it } // null assetManager → newFromFile（文件路径）
             }
             // G3.1：int8 优先（fp32 实测 PSS 尖峰 808MB → native exit(1)；
             // int8 体积 114MB，session 内存预期 ~400MB）。int8 缺失时退回 fp32。

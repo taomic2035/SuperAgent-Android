@@ -12,6 +12,8 @@
 
     <!-- 包可见性（Android 11+）：无 queries 声明时 getLaunchIntentForPackage 对第三方 App 恒 null，
          control.launch 全灭（2026-08-19 真机实测）。声明 launcher intent 即可见全部可启动 App。 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+
     <queries>
         <intent>
             <action android:name="android.intent.action.MAIN" />
@@ -39,7 +41,7 @@
         <service
             android:name=".BodyService"
             android:exported="false"
-            android:foregroundServiceType="dataSync|mediaProjection">
+            android:foregroundServiceType="dataSync|mediaProjection|microphone">
         </service>
 
         <service
