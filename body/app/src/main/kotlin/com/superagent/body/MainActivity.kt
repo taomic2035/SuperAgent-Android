@@ -7,84 +7,101 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.widget.Button
+import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 
+/**
+ * UX-01 首启就绪引导（docs/12 §5.1）：
+ * 只提示当前缺失项（▶ 突出第一个），不先展示开发者参数；
+ * 每项说明用途并直达系统设置；返回后自动复检；UI-0 不索取麦克风。
+ */
 class MainActivity : AppCompatActivity() {
-    private lateinit var statusText: TextView
-    private lateinit var btnService: Button
+    private lateinit var statusContainer: LinearLayout
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
-        statusText = findViewById(R.id.status)
-        btnService = findViewById(R.id.btn_service)
-        val btnA11y = findViewById<Button>(R.id.btn_a11y)
-        val btnPerms = findViewById<Button>(R.id.btn_perms)
+        statusContainer = findViewById(R.id.status)
 
-        btnService.setOnClickListener {
+        findViewById<Button>(R.id.btn_service).setOnClickListener {
             BodyService.start(this)
-            btnService.text = "服务运行中"
-            btnService.isEnabled = false
             refreshStatus()
         }
-        btnA11y.setOnClickListener { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
-        btnPerms.setOnClickListener {
-            // U2-H02（docs/12 §5.1.5）：UI-0 不索取麦克风——只请求通知权限；
-            // RECORD_AUDIO 在语音功能（UI-1）启用时按需申请
+        findViewById<Button>(R.id.btn_a11y).setOnClickListener {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        }
+        findViewById<Button>(R.id.btn_perms).setOnClickListener {
             val perms = mutableListOf<String>()
             if (Build.VERSION.SDK_INT >= 33) perms.add(Manifest.permission.POST_NOTIFICATIONS)
-            if (perms.isNotEmpty()) {
-                ActivityCompat.requestPermissions(this, perms.toTypedArray(), 1)
-            }
+            if (perms.isNotEmpty()) ActivityCompat.requestPermissions(this, perms.toTypedArray(), 1)
         }
-        // 视觉感知 L1 授权：系统屏幕捕获弹窗，一次授权全程有效（结果回传 ScreenshotService）
         findViewById<Button>(R.id.btn_capture).setOnClickListener {
-            val svc = com.superagent.body.core.screenshot.ScreenshotService.shared
-            if (svc == null) {
-                statusText.text = "请先启动躯体服务，再开启屏幕捕获"
-                return@setOnClickListener
-            }
+            val svc = com.superagent.body.core.screenshot.ScreenshotService.shared ?: return@setOnClickListener
             startActivityForResult(svc.consentIntent(), REQ_CAPTURE)
         }
-        // UI-0（docs/12 §5.1 首启引导）：悬浮窗（SAW）授权——缺哪项直达哪项设置，返回即复检
         findViewById<Button>(R.id.btn_overlay).setOnClickListener {
             if (Build.VERSION.SDK_INT >= 23 && !Settings.canDrawOverlays(this)) {
                 startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:$packageName")))
             } else {
                 FloatingUiService.start(this)
-                statusText.text = "悬浮球已启动（侧边控制球）"
+                refreshStatus()
             }
-        }
-    }
-
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == REQ_CAPTURE) {
-            val ok = data != null &&
-                com.superagent.body.core.screenshot.ScreenshotService.shared?.attach(resultCode, data) == true
-            statusText.text = if (ok) "屏幕捕获：已授权（视觉感知可用）" else "屏幕捕获：未授权（感知将回退无障碍）"
         }
     }
 
     override fun onResume() {
         super.onResume()
-        refreshStatus()
+        refreshStatus() // §5.1.4：从系统设置返回后立即复检
+    }
+
+    /** UX-01：按序检查，只突出当前第一个缺失项（▶ 红色），已过项绿色 ✓，未到的灰色 · */
+    private fun refreshStatus() {
+        val items = listOf(
+            "通知权限" to (Build.VERSION.SDK_INT < 33 ||
+                ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED),
+            "无障碍服务" to (BodyAccessibilityService.instance != null),
+            "悬浮窗（SAW）" to (Build.VERSION.SDK_INT < 23 || Settings.canDrawOverlays(this)),
+            "躯体服务" to BodyService.isRunning,
+        )
+        statusContainer.removeAllViews()
+        var firstMissing = true
+        for ((name, ready) in items) {
+            statusContainer.addView(TextView(this).apply {
+                text = when {
+                    ready -> "✓ $name"
+                    firstMissing -> "▶ $name（点击上方对应按钮开启）"
+                    else -> "· $name"
+                }
+                textSize = 15f
+                setPadding(16, 12, 16, 12)
+                setTextColor(
+                    when {
+                        ready -> ContextCompat.getColor(this@MainActivity, android.R.color.holo_green_dark)
+                        firstMissing -> ContextCompat.getColor(this@MainActivity, android.R.color.holo_red_dark)
+                        else -> ContextCompat.getColor(this@MainActivity, android.R.color.darker_gray)
+                    },
+                )
+            })
+            if (!ready) firstMissing = false
+        }
+        if (items.all { it.second }) {
+            statusContainer.addView(TextView(this).apply {
+                text = "🎉 全部就绪！点击「启动躯体服务」开启后台运行，悬浮球将出现在侧边。"
+                textSize = 14f; setPadding(16, 20, 16, 12)
+                setTextColor(ContextCompat.getColor(this@MainActivity, android.R.color.holo_blue_dark))
+            })
+        }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_CAPTURE) refreshStatus()
     }
 
     companion object {
         private const val REQ_CAPTURE = 1001
-    }
-
-    private fun refreshStatus() {
-        val a11y = BodyAccessibilityService.instance != null
-        val mic = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-        statusText.text = buildString {
-            append("服务：${if (btnService.isEnabled.not()) "运行中" else "未启动"}\n")
-            append("无障碍：${if (a11y) "✓" else "✗"}\n")
-            append("麦克风：${if (mic) "✓" else "✗"}")
-        }
     }
 }

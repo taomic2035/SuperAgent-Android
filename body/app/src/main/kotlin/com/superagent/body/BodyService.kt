@@ -19,6 +19,7 @@ class BodyService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        isRunning = true
         startForeground(NOTIFICATION_ID, buildNotification())
         val token = TokenSecurity.loadOrGenerate(this)
         BodyContext.init(this, BodySettings(token = token))
@@ -41,6 +42,7 @@ class BodyService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        isRunning = false
         core?.stop()
         core = null
         super.onDestroy()
@@ -80,6 +82,11 @@ class BodyService : Service() {
         private const val CHANNEL = "body-service"
         private const val NOTIFICATION_ID = 1001
         private const val ACTION_STOP = "com.superagent.body.STOP"
+
+        /** UX-01：就绪引导检查用（服务是否在跑） */
+        @Volatile
+        var isRunning: Boolean = false
+            private set
 
         fun start(context: Context) {
             val intent = Intent(context, BodyService::class.java)
