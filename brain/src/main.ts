@@ -130,9 +130,25 @@ async function main(): Promise<void> {
     return true
   }
 
-  /** 带 failover 的 prompt：连续失败 ≥3 次切换模型；U2-#35：120s 流超时自动 abort。 */
+  /** 带 failover 的 prompt：连续失败 ≥3 次切换模型；120s 流超时；自动注入匹配技能。 */
   async function promptAgent(input: string): Promise<void> {
     clearStop()
+    // 技能路由增强：任务输入时自动检索匹配技能并注入提示（模型不用自觉查 skill.list）
+    let enrichedInput = input
+    try {
+      const hits = await body.rpc<{ hits: Array<{ skill: { name: string; description: string } }> }>(
+        "skill.search", { query: input }, undefined, 5_000,
+      )
+      if (hits.hits.length > 0) {
+        const skillHint = hits.hits
+          .slice(0, 3)
+          .map((h) => `${h.skill.name}（${h.skill.description.slice(0, 30)}）`)
+          .join("、")
+        enrichedInput = `【技能匹配】${skillHint}。请优先 skill.run 执行。\n${input}`
+        console.log(`[brain] 技能路由：${hits.hits.length} 个匹配`)
+      }
+    } catch { /* skill.search 失败不阻塞任务 */ }
+
     void reportPromptStart(input)
     // U2-#35：LLM 流停滞（GLM 4/4 实测卡 3-14min）——120s 超时 abort 防任务挂死
     const timeoutId = setTimeout(() => {
@@ -140,7 +156,7 @@ async function main(): Promise<void> {
       console.log("[brain] LLM 流超时（120s），已 abort")
     }, LLM_STREAM_TIMEOUT_MS)
     try {
-      await agent.prompt(input)
+      await agent.prompt(enrichedInput)
       clearTimeout(timeoutId)
       llmFailures = 0
       if (isStopRequested()) {
@@ -160,7 +176,7 @@ async function main(): Promise<void> {
       const msg = err instanceof Error ? err.message : String(err)
       if (llmFailures >= 3) {
         if (switchModel(`失败原因：${msg}`)) {
-          await agent.prompt(input)
+          await agent.prompt(enrichedInput)
           return
         }
       }
