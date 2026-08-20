@@ -311,8 +311,12 @@ async function voiceTurn(body: BodyClient, prompt: (input: string) => Promise<vo
     console.log("助手> ")
     responseBuffer = ""
     await prompt(asr.text)
+    // U2-H06：TTS 只播报关键节点（收到/需处理/完成/失败），不逐步朗读模型全文
+    // 全文可能含金额/账号/验证码——用 redactText 脱敏 + 截断
     if (responseBuffer.trim()) {
-      await body.rpc("speech.say", { text: responseBuffer.trim() })
+      const { redactText } = await import("./guards/redact.ts")
+      const safe = redactText(responseBuffer.trim().slice(0, 120))
+      await body.rpc("speech.say", { text: safe }).catch(() => undefined)
     }
     finishRun(getRun().finishVerified ? "success" : "closed")
     console.log("\n---")
