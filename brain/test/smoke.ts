@@ -18,7 +18,7 @@ import type { RunState } from "../src/runState.ts"
 import { buildTools } from "../src/tools/index.ts"
 import { parseCandidates } from "../src/memory/reflect.ts"
 import { loadPersonas } from "../src/personas/personas.ts"
-import type { MemoryWriteResult, ScreenResult } from "../src/ipc/types.ts"
+import type { MemorySearchResult, MemoryWriteResult, ScreenResult } from "../src/ipc/types.ts"
 
 let passed = 0
 function ok(name: string): void {
@@ -338,6 +338,37 @@ async function main(): Promise<void> {
         delete process.env.SUPER_AGENT_STATE_DIR
       }
       ok("task.finish 成功后异步触发 reflect（goal/summary/tools 透传，不阻塞完成路径）")
+    }
+
+    // ME-3：lessons 自动采集（gate 拦截/技能失配 → gate-lesson）+ runs 全量归档
+    {
+      // 提交边界拦截（无 nonce 路径，mock 对"支付"label 拦截）→ lesson 自动入库
+      const tools = buildTools(body, loadPersonas().personas)
+      const selectOption = tools.find((t) => t.name === "control.selectOption")!
+      await assert.rejects(selectOption.execute("l1", { label: "立即支付" }))
+      // SKILL_STALE → lesson 自动入库
+      const skillRun = tools.find((t) => t.name === "skill.run")!
+      await assert.rejects(skillRun.execute("l2", { name: "stale-skill" }))
+      await new Promise((r) => setTimeout(r, 50))
+      const lessons = (await body.rpc<MemorySearchResult>("memory.search", { query: "提交边界 技能失配", limit: 10 })).hits
+      assert.ok(lessons.some((h) => h.memory.topic === "提交边界:立即支付" && h.memory.source === "gate-lesson"), "COMMIT_BOUNDARY → gate-lesson")
+      assert.ok(lessons.some((h) => h.memory.topic === "技能失配:stale-skill" && h.memory.source === "gate-lesson"), "SKILL_STALE → gate-lesson")
+      ok("gate 拦截/技能失配自动采集 lesson（fire-and-forget 不影响原错误语义）")
+
+      // runs 全量归档往返：archive → list 新在前，字段完整
+      const archived = await body.rpc<{ id: number }>("run.archive", {
+        goal: "点一杯奶茶", outcome: "success", failureReason: undefined,
+        startedAt: 100, finishedAt: 200,
+        trace: [{ tool: "control.tap", args: { x: 1, y: 2 }, located: true, timestamp: 150 }],
+      })
+      assert.ok(archived.id > 0)
+      const listed = await body.rpc<{ runs: Array<{ goal: string; outcome: string; trace: Array<{ tool: string }> }> }>("run.list", { limit: 5 })
+      assert.ok(listed.runs.some((r) => r.goal === "点一杯奶茶" && r.outcome === "success" && r.trace[0]?.tool === "control.tap"))
+      await assert.rejects(
+        body.rpc("run.archive", { goal: "g", outcome: "bogus" }),
+        (e: unknown) => e instanceof BodyRpcError && e.code === "BAD_PARAMS",
+      )
+      ok("run.archive/run.list 全量归档往返 + outcome 枚举校验")
     }
 
     const ev1 = await body.events(0)

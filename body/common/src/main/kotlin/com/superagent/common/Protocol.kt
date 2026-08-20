@@ -262,3 +262,27 @@ data class MemorySearchHit(
 data class MemorySearchResult(
     val hits: List<MemorySearchHit>,
 )
+
+/** ME-3b 情景层全量归档（docs/15 §3）：run 历史 SQLite 化（Iron Law——环形 30 条会丢，全量不丢） */
+@Serializable
+data class RunRecord(
+    val id: Long,
+    val goal: String,
+    /** success | failed | crashed | needs_human | closed（RunOutcome 枚举） */
+    val outcome: String,
+    val failureReason: String? = null,
+    val trace: List<TraceStep> = emptyList(),
+    val startedAt: Long,
+    val finishedAt: Long,
+    val archivedAt: Long,
+)
+
+@Serializable
+data class RunArchiveResult(
+    val id: Long,
+)
+
+@Serializable
+data class RunListResult(
+    val runs: List<RunRecord>,
+)

@@ -55,10 +55,10 @@ class BodyCore(
     private val hardware = HardwareService(context)
     private val hitl = Hitl(context, events)
     private val skills = SkillStore(File(context.filesDir, "skills"), perceiver, selector, controller, events, sensitiveSession)
-    /** ME-1 记忆库（docs/15）：body 侧 SQLite 权威存储，brain 经 4 个 memory.* RPC 读写 */
-    private val memories = com.superagent.body.core.memory.MemoryStore(
-        com.superagent.body.core.memory.AndroidSqliteMemoryDb(context),
-    )
+    /** ME-1/ME-3b 记忆与归档（docs/15）：body 侧 SQLite 权威存储（memory.db：memories+runs 两表） */
+    private val memoryDb = com.superagent.body.core.memory.AndroidSqliteMemoryDb(context)
+    private val memories = com.superagent.body.core.memory.MemoryStore(memoryDb)
+    private val runArchive = com.superagent.body.core.memory.RunArchiveStore(memoryDb)
     private val blobsDir = File(context.filesDir, "blobs")
     private val screenshots = com.superagent.body.core.screenshot.ScreenshotService(context).also {
         com.superagent.body.core.screenshot.ScreenshotService.shared = it
@@ -431,6 +431,28 @@ class BodyCore(
             val id = params(req).long("id") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 id")
             if (memories.forget(id)) emptyOk(req) else bad(req, "NOT_FOUND", "记忆条目不存在: $id")
         }
+
+        // ME-3b 情景层全量归档（docs/15 §3）：run 快照 SQLite 全量留存（不环形淘汰）
+        server.rpc("run.archive") { req ->
+            val p = params(req)
+            val goal = p.string("goal") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 goal")
+            val outcome = p.string("outcome") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 outcome")
+            val trace = p.json.get("trace")?.let {
+                runCatching { json.decodeFromJsonElement<List<com.superagent.common.TraceStep>>(it) }.getOrNull()
+            } ?: emptyList()
+            val now = System.currentTimeMillis()
+            runCatching {
+                runArchive.archive(
+                    goal, outcome, p.string("failureReason"), trace,
+                    p.long("startedAt") ?: now, p.long("finishedAt") ?: now,
+                )
+            }.fold(
+                { ok(req, it) },
+                { e -> bad(req, if (e is IllegalArgumentException) "BAD_PARAMS" else "MEMORY_STORE", e.message ?: "归档失败") },
+            )
+        }
+
+        server.rpc("run.list") { req -> ok(req, runArchive.list(params(req).int("limit") ?: 30)) }
 
         server.rpc("hitl.confirm", HITL_RPC_TIMEOUT_MS) { req ->
             val p = params(req)

@@ -8,6 +8,8 @@ import com.superagent.common.MemoryEntry
 import com.superagent.common.MemorySearchHit
 import com.superagent.common.MemorySearchResult
 import com.superagent.common.MemoryWriteResult
+import com.superagent.common.RunRecord
+import com.superagent.common.TraceStep
 import com.superagent.common.tokenize
 
 /**
@@ -27,9 +29,9 @@ interface MemoryDb {
     fun active(): List<MemoryEntry>
 }
 
-/** 生产实现：files/memory.db（android.database.sqlite，零新依赖；docs/15 §4 建表）。 */
+/** 生产实现：files/memory.db（android.database.sqlite，零新依赖；docs/15 §4 建表）。memories + runs 两表（ME-1/ME-3b）。 */
 class AndroidSqliteMemoryDb(context: Context, name: String = "memory.db") :
-    SQLiteOpenHelper(context.applicationContext, name, null, DB_VERSION), MemoryDb {
+    SQLiteOpenHelper(context.applicationContext, name, null, DB_VERSION), MemoryDb, RunArchiveDb {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -41,6 +43,12 @@ class AndroidSqliteMemoryDb(context: Context, name: String = "memory.db") :
                 "created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)",
         )
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_memories_topic ON memories(topic, kind) WHERE revoked=0")
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS runs (" +
+                "id INTEGER PRIMARY KEY AUTOINCREMENT," +
+                "goal TEXT NOT NULL, outcome TEXT NOT NULL, failure_reason TEXT," +
+                "trace_json TEXT NOT NULL, started_at INTEGER NOT NULL, finished_at INTEGER NOT NULL, archived_at INTEGER NOT NULL)",
+        )
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -93,6 +101,50 @@ class AndroidSqliteMemoryDb(context: Context, name: String = "memory.db") :
         createdAt = c.getLong(c.getColumnIndexOrThrow("created_at")),
         updatedAt = c.getLong(c.getColumnIndexOrThrow("updated_at")),
     )
+
+    // ---- RunArchiveDb（ME-3b runs 表）----
+
+    private val runJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+
+    override fun insert(record: RunRecord): Long =
+        writableDatabase.insert(
+            "runs", null,
+            ContentValues().apply {
+                put("goal", record.goal)
+                put("outcome", record.outcome)
+                put("failure_reason", record.failureReason)
+                put("trace_json", runJson.encodeToString(kotlinx.serialization.builtins.ListSerializer(com.superagent.common.TraceStep.serializer()), record.trace))
+                put("started_at", record.startedAt)
+                put("finished_at", record.finishedAt)
+                put("archived_at", record.archivedAt)
+            },
+        )
+
+    override fun list(limit: Int): List<RunRecord> =
+        readableDatabase.query("runs", null, null, null, null, null, "id DESC", "$limit").use { c ->
+            val out = mutableListOf<RunRecord>()
+            while (c.moveToNext()) {
+                val trace = runCatching {
+                    runJson.decodeFromString(
+                        kotlinx.serialization.builtins.ListSerializer(com.superagent.common.TraceStep.serializer()),
+                        c.getString(c.getColumnIndexOrThrow("trace_json")),
+                    )
+                }.getOrDefault(emptyList())
+                out.add(
+                    RunRecord(
+                        id = c.getLong(c.getColumnIndexOrThrow("id")),
+                        goal = c.getString(c.getColumnIndexOrThrow("goal")),
+                        outcome = c.getString(c.getColumnIndexOrThrow("outcome")),
+                        failureReason = c.getString(c.getColumnIndexOrThrow("failure_reason")),
+                        trace = trace,
+                        startedAt = c.getLong(c.getColumnIndexOrThrow("started_at")),
+                        finishedAt = c.getLong(c.getColumnIndexOrThrow("finished_at")),
+                        archivedAt = c.getLong(c.getColumnIndexOrThrow("archived_at")),
+                    ),
+                )
+            }
+            out
+        }
 
     companion object {
         const val DB_VERSION = 1

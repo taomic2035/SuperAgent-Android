@@ -9,7 +9,7 @@ import { buildLlmRelevanceCheck } from "./guards/relevance.ts"
 import { buildLlmVisionMarks } from "./guards/vision.ts"
 import { loadPersonas } from "./personas/personas.ts"
 import { buildSystemPrompt, buildChatOnlyPrompt } from "./personas/promptBuilder.ts"
-import { beginRun, hasResumableRun, resumeRun, finishRun, peekRun, buildResumeContext, getRun } from "./runState.ts"
+import { beginRun, hasResumableRun, resumeRun, finishRun, peekRun, buildResumeContext, getRun, setArchiveSink } from "./runState.ts"
 import { env } from "./env.ts"
 import { speak } from "./tts/index.ts"
 import { initBrainEvents, reportPromptStart, reportFinish, isStopRequested, clearStop, requestStop, requestPause, resumeFromPause } from "./ipc/brainEventReporter.ts"
@@ -36,6 +36,18 @@ async function main(): Promise<void> {
   console.log(`[brain] 等待躯体服务 ${BODY_URL} ...`)
   await body.waitForBody()
   console.log("[brain] 躯体已连接")
+
+  // ME-3b 情景层全量归档（docs/15 §3）：终态 run 推 body SQLite（fire-and-forget，脱敏 snapshot）
+  setArchiveSink((snap) => {
+    void body.rpc("run.archive", {
+      goal: snap.goal,
+      outcome: snap.outcome ?? "closed",
+      failureReason: snap.failureReason,
+      startedAt: snap.startedAt,
+      finishedAt: snap.finishedAt,
+      trace: snap.trace,
+    }).catch(() => undefined)
+  })
 
   // TC-14 断点续跑：只预览不灌入 current，避免 beginRun 前的旧状态污染新任务
   const pending = peekRun()

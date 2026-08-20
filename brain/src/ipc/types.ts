@@ -185,3 +185,24 @@ export interface MemorySearchHit {
 export interface MemorySearchResult {
   hits: MemorySearchHit[]
 }
+
+/** ME-3b 情景层全量归档（docs/15 §3）：run 历史 SQLite 化（环形 30 条会丢，全量不丢） */
+export interface RunRecord {
+  id: number
+  goal: string
+  /** success | failed | crashed | needs_human | closed（RunOutcome 枚举） */
+  outcome: string
+  failureReason?: string
+  trace?: TraceStep[]
+  startedAt: number
+  finishedAt: number
+  archivedAt: number
+}
+
+export interface RunArchiveResult {
+  id: number
+}
+
+export interface RunListResult {
+  runs: RunRecord[]
+}

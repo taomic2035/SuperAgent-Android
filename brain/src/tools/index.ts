@@ -27,6 +27,7 @@ import type {
 } from "../ipc/types.ts"
 import type { Persona } from "../personas/promptBuilder.ts"
 import type { Reflector } from "../memory/reflect.ts"
+import { commitBoundaryLesson, recordLesson, skillStaleLesson } from "../memory/lessons.ts"
 import { redactScreen, redactText } from "../guards/redact.ts"
 import { speak } from "../tts/index.ts"
 
@@ -160,11 +161,16 @@ export function buildTools(
         try {
           result = await body.rpc<ActionResult>("control.selectOption", params, idem("control.selectOption", toolCallId))
         } catch (err) {
-          if (err instanceof BodyRpcError && err.code === "COMMIT_BOUNDARY" && err.nonce) {
-            throw new Error(
-              `敏感会话拦截（nonce=${err.nonce}）。调用 hitl.confirm 时把 nonce="${err.nonce}" 传入 nonce 参数；` +
-              "用户同意后重试本动作即可放行。通知文案由服务端生成，你不需要自己写确认文案。",
-            )
+          if (err instanceof BodyRpcError && err.code === "COMMIT_BOUNDARY") {
+            // ME-3a：gate 拦截 → lesson 自动采集（fire-and-forget，不吞原错误语义）
+            const draft = commitBoundaryLesson(params.label, Boolean(err.nonce))
+            void recordLesson(body, draft.topic, draft.content)
+            if (err.nonce) {
+              throw new Error(
+                `敏感会话拦截（nonce=${err.nonce}）。调用 hitl.confirm 时把 nonce="${err.nonce}" 传入 nonce 参数；` +
+                "用户同意后重试本动作即可放行。通知文案由服务端生成，你不需要自己写确认文案。",
+              )
+            }
           }
           throw err
         }
@@ -349,6 +355,9 @@ export function buildTools(
         } catch (err) {
           // BD-07.3 Recovery mode：失配上下文透传给模型，从失配处续走而非从头重来
           if (err instanceof BodyRpcError && err.code === "SKILL_STALE") {
+            // ME-3a：技能失配 → lesson 自动采集（fire-and-forget）
+            const draft = skillStaleLesson(params.name, err.message)
+            void recordLesson(body, draft.topic, draft.content)
             throw new Error(
               `技能 ${params.name} 回放失配（${err.message}）。已完成的步骤无需重做：先 perceive.screen 确认当前位置，从失配处现场规划继续；` +
                 "任务最终成功后 task.finish 会自动重新固化该技能（以新轨迹复活为 candidate）。",

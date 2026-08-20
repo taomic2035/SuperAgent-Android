@@ -28,6 +28,19 @@ export function startMockBody(options: MockBodyOptions): Promise<{ port: number;
   }
   let nextMemoryId = 1
   const memories: MockMemory[] = []
+  // ME-3b mock run 归档库（全量不淘汰，list 新在前）
+  interface MockRunRecord {
+    id: number
+    goal: string
+    outcome: string
+    failureReason: string | null
+    trace: unknown[]
+    startedAt: number
+    finishedAt: number
+    archivedAt: number
+  }
+  let nextRunId = 1
+  const runRecords: MockRunRecord[] = []
 
   function authOk(req: IncomingMessage): boolean {
     return req.headers.authorization === `Bearer ${token}`
@@ -222,6 +235,30 @@ export function startMockBody(options: MockBodyOptions): Promise<{ port: number;
         if (i < 0) return void sendJson(res, 200, fail("NOT_FOUND", `记忆条目不存在: ${p.id}`))
         memories.splice(i, 1)
         return void sendJson(res, 200, reply({}))
+      }
+      case "run.archive": {
+        const p = (params as { goal?: string; outcome?: string; failureReason?: string; startedAt?: number; finishedAt?: number }) ?? {}
+        if (!p.goal || !p.outcome) return void sendJson(res, 200, fail("BAD_PARAMS", "缺少 goal/outcome"))
+        if (!["success", "failed", "crashed", "needs_human", "closed"].includes(p.outcome)) {
+          return void sendJson(res, 200, fail("BAD_PARAMS", `outcome 非法: ${p.outcome}`))
+        }
+        const id = nextRunId++
+        runRecords.push({
+          id,
+          goal: p.goal,
+          outcome: p.outcome,
+          failureReason: p.failureReason ?? null,
+          trace: ((params as { trace?: unknown[] })?.trace ?? []) as MockRunRecord["trace"],
+          startedAt: p.startedAt ?? Date.now(),
+          finishedAt: p.finishedAt ?? Date.now(),
+          archivedAt: Date.now(),
+        })
+        return void sendJson(res, 200, reply({ id }))
+      }
+      case "run.list": {
+        const p = (params as { limit?: number }) ?? {}
+        const limit = Math.min(100, Math.max(1, p.limit ?? 30))
+        return void sendJson(res, 200, reply({ runs: runRecords.slice(-limit).reverse() }))
       }
       case "hitl.confirm":
         return void sendJson(res, 200, reply({ approved: (params as { prompt?: string })?.prompt?.includes("敏感") ? false : true }))

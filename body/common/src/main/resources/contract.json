@@ -32,6 +32,9 @@
     "MemoryEntry": { "fields": ["id", "kind", "topic", "content", "confidence", "source", "hits", "revoked", "createdAt", "updatedAt"] },
     "MemoryWriteResult": { "fields": ["id", "merged"] },
     "MemorySearchHit": { "fields": ["memory", "score"] },
-    "MemorySearchResult": { "fields": ["hits"] }
+    "MemorySearchResult": { "fields": ["hits"] },
+    "RunRecord": { "fields": ["id", "goal", "outcome", "failureReason", "trace", "startedAt", "finishedAt", "archivedAt"] },
+    "RunArchiveResult": { "fields": ["id"] },
+    "RunListResult": { "fields": ["runs"] }
   }
 }

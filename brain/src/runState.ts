@@ -31,6 +31,15 @@ export interface RunState {
   finishVerified?: boolean
 }
 
+/** ME-3b 归档出口（docs/15 §3）：main 注册 → body run.archive（SQLite 全量）；本地环形照旧供断点续跑 */
+export type ArchiveSink = (snapshot: RunState & { finishedAt: number }) => void
+
+let archiveSink: ArchiveSink | undefined
+
+export function setArchiveSink(fn: ArchiveSink): void {
+  archiveSink = fn
+}
+
 function stateDir(): string {
   return env("SUPER_AGENT_STATE_DIR", join(process.env.HOME ?? process.cwd(), ".super-agent"))
 }
@@ -74,13 +83,21 @@ export function finishRun(outcome: RunOutcome, failureReason?: string): void {
 }
 
 /**
- * 终态 run 归档（Kestrel TraceRetention 语义，保留最近 30 条）：审计/复盘"模型在哪些任务上
- * 谎报/失败"必需。主文件 runstate.json 仍只存最近一次（断点续跑用），历史独立文件。
+ * 终态 run 归档（Kestrel TraceRetention 语义，本地环形 30 条 + ME-3b SQLite 全量双写）：
+ * 本地 runstate-history.json 仍只留 30 条（审计快捷入口），body SQLite 全量不丢（Iron Law）。
+ * snapshot 为脱敏后盘上数据（persist 已过 redact），无 PII 出设备边界。
  */
 function archiveRun(): void {
   try {
     const snapshot = loadPersisted()
     if (!snapshot) return
+    if (archiveSink) {
+      try {
+        archiveSink({ ...snapshot, finishedAt: Date.now() })
+      } catch {
+        // SQLite 归档失败不阻断（本地环形仍是兜底）
+      }
+    }
     const historyFile = join(stateDir(), "runstate-history.json")
     const history = readHistory(historyFile)
     history.push(snapshot)
