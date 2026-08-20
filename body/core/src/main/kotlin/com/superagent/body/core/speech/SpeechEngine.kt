@@ -158,14 +158,13 @@ class SpeechEngine(private val context: Context) {
                 try {
                     track.play()
                     val sid = voice?.speakerId ?: 0
-                    t.generateWithCallback(text, sid, voice?.speed ?: 1.0f) { samples ->
-                        if (!playing.get()) {
-                            return@generateWithCallback 1
-                        }
-                        val pcm = ShortArray(samples.size)
-                        for (i in samples.indices) pcm[i] = (samples[i] * 32767).toInt().toShort()
+                    // DS-007 修复：generateWithCallback 的 lambda 被 D8 desugar → JNI 桥 NoSuchMethodError → SIGABRT。
+                    // 改用无回调 generate()（全量生成后一次播放——vits 中文短文本几百 ms，首包延迟可接受）
+                    val audio = t.generate(text, sid, voice?.speed ?: 1.0f)
+                    if (playing.get() && audio.samples.isNotEmpty()) {
+                        val pcm = ShortArray(audio.samples.size)
+                        for (i in audio.samples.indices) pcm[i] = (audio.samples[i] * 32767).toInt().toShort()
                         track.write(pcm, 0, pcm.size)
-                        1
                     }
                 } finally {
                     runCatching { track.stop() }
