@@ -76,9 +76,16 @@ export class BodyClient {
       return await this.rawRpcWithTimeout(method, params, idempotencyKey, timeoutMs)
     } catch (err) {
       if (err instanceof BodyUnavailableError && !err.message.includes("401")) {
-        // 网络瞬断：500ms 后重试一次（不重试认证失败）
         await new Promise((r) => setTimeout(r, 500))
-        return this.rawRpcWithTimeout(method, params, idempotencyKey, timeoutMs)
+        try {
+          return await this.rawRpcWithTimeout(method, params, idempotencyKey, timeoutMs)
+        } catch (retryErr) {
+          if (retryErr instanceof BodyUnavailableError) {
+            // 统一：所有工具看到友好的 body 不可达提示（模型可理解并重试）
+            throw new BodyUnavailableError("躯体服务暂不可达（可能正在重启），请等几秒后重试")
+          }
+          throw retryErr
+        }
       }
       throw err
     }
