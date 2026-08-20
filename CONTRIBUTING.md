@@ -8,58 +8,65 @@
 
 | 变更类型 | 改哪个文档 |
 |----------|-----------|
-| 接口（RPC 方法/参数/返回/错误码） | [docs/07](docs/07-接口规格说明书.md) + 升 protocolVersion |
+| 接口（RPC 方法/参数/返回/错误码） | [docs/07](docs/07-接口规格说明书.md) + `contract.json` 三处同步 |
 | 需求（新增/修改功能、优先级） | [docs/06](docs/06-功能规格清单与追踪矩阵.md) |
-| 架构（拓扑/安全模型/状态机/ADR） | [docs/05](docs/05-架构设计与移交基线-v2.md) |
+| 架构（拓扑/安全模型/状态机/ADR） | [docs/05](docs/05-架构设计与移交基线-v2.md) + [docs/09](docs/09-架构决策记录.md) |
+| 用户体验（交互模型/验收标准） | [docs/12](docs/12-产品体验需求-用户旅程视角.md) |
 | 质量（性能预算/验收标准） | [docs/08](docs/08-非功能需求与验收测试计划.md) |
 
-不一致时裁决规则见 [docs/06 §6](docs/06-功能规格清单与追踪矩阵.md)。
+**契约纪律**（CT-05）：跨 brain↔body 的类型变更必须先改 `body/common/src/main/resources/contract.json`，然后同步 `Protocol.kt` 和 `types.ts`，双侧镜像测试会拦截漂移。
 
 ## 2. 开发流程
 
 ```bash
-# 大脑
+# 大脑（brain/）
 cd brain && npm install
-npm run typecheck   # 必须零错误
-npm run smoke       # 11 项冒烟必须全绿
+npm run typecheck     # TypeScript 类型检查，必须零错误
+npm run contract      # 契约镜像（25 类型），必须全绿
+npm run smoke         # 冒烟测试（18 项），必须全绿
 
-# 躯体
+# 躯体（body/）
 cd body
-./gradlew :common:test        # 6 项单测必须全绿
-./gradlew :app:assembleDebug  # 必须成功
+./gradlew :common:test :core:testDebugUnitTest   # 56 项 JVM 单测，必须全绿
+./gradlew :app:assembleDebug                     # APK 构建（需先 fetch-models）
+
+# 模型获取（首次或升级时）
+bash scripts/fetch-models.sh   # ~600MB（sherpa-onnx .so + ASR/TTS/声纹模型）
 ```
 
-PR 前确保以上全部通过。
+CI（GitHub Actions）会在 push/PR 时自动跑 brain + body 测试。
 
-## 3. 代码约定
+## 3. 架构铁律（违反即回退）
 
-- **不加注释**（除非逻辑极度非直觉）；命名自解释
-- brain：TypeScript strict，import 带 `.ts` 扩展（`allowImportingTsExtensions`）
-- body：Kotlin，`jvmTarget = 17`，package 按 `com.superagent.{common|body.core|body}`
-- 第三方资产只入 `third/`，工程内相对路径引用，不拷贝进源码树
-- 禁止提交：`local.properties`、`node_modules/`、`build/`、`.so` 二进制、API key
+1. **brain 只想，body 只做**——感知/操控/语音/HITL/词表/技能权威全在 body；brain 不碰 UI 不持词表
+2. **安全闸门在 body 硬实现**——`ActionExecutor` 统一收口（RPC 与回放共用），`ActionGate` 全节点坐标校验，`HITL nonce` 一次性消费
+3. **pi 只用核心 Loop**——`Agent` + `pi-ai`，不用 AgentHarness/Session 等周边（AD-05）
+4. **M3 本地模型无工具仅闲聊**——弱模型不授予设备控制权
+5. **契约唯一真源**——`contract.json`，双侧镜像测试拦截漂移
 
-## 4. 安全红线
+详见 [docs/05](docs/05-架构设计与移交基线-v2.md) 和 [docs/09](docs/09-架构决策记录.md)（AD-01~11）。
 
-- 支付/提交边界逻辑改动需附带测试用例（参考 [docs/08 TC-04/TC-05](docs/08-非功能需求与验收测试计划.md)）
-- 不得引入硬编码 token/密钥；调试默认值仅限 `BuildConfig.DEBUG`
-- 不得削弱 body 侧硬拦截（R2 权威），brain 侧守卫是辅助不是依赖
+## 4. 多智能体协作
 
-## 5. 提交信息
+本项目采用多 agent 协作开发（见 [docs/13](docs/13-多智能体分工与协作规约.md)）：
+
+| 角色 | 职责 |
+|---|---|
+| GLM-5.3 | 架构/规划/实现/提交（唯一 git 操作者） |
+| GPT sol | UX 行为定义/审计（docs/12 唯一维护者） |
+| DeepSeek | 低成本执行（本地 handoff 队列） |
+
+红线：git commit/push 仅编排方；禁删除文件（移 d:\tmp）；单点精准编辑；密钥只引 SESSION.md 不落盘。
+
+## 5. 提交规范
 
 ```
-<类型>: <描述>
-
-类型: feat | fix | docs | refactor | test | chore
+feat(scope): 一句话描述
+fix(scope): 一句话描述
+docs: 一句话描述
+test: 一句话描述
 ```
 
-示例：`feat: 技能四态生命周期状态机`、`fix: BodyServer Main 线程死锁`。
-
-## 6. 分支
-
-- `main`：稳定基线
-- `wp<N>-<短描述>`：工作包分支（如 `wp0-security-closure`）
-
-## 7. 致谢原则
-
-本项目融合 Pi / sherpa-onnx / Clowder / MiraAgent 四个先行者。引用其设计时注明来源；复用其代码时遵守各自协议（均 MIT）。
+- 每次提交附 `Co-Authored-By` 标识
+- 语音/模型文件不入库（.gitignore 覆盖 `*.onnx` `*.so` `*.wav` `*.apk`）
+- `SESSION.md` 和 `docs/handoff/` 仅本地（已 gitignore）
