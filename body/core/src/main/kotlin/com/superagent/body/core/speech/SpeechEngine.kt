@@ -52,6 +52,9 @@ class SpeechEngine(private val context: Context) {
 
     private val recorder = AudioRecorder(File(context.cacheDir, "audio"))
 
+    /** Plan C 兜底：Android 系统 TTS（sherpa 全失败时保证出声） */
+    val systemTts by lazy { SystemTts(context).also { it.initialize() } }
+
     /** AD-12：Barge-in 基础设施——VAD 引擎 + 流式录音器（TTS 播放中检测用户说话） */
     val vadEngine by lazy { VadEngine(context) }
     private var bargeInRecorder: StreamingRecorder? = null
@@ -136,12 +139,19 @@ class SpeechEngine(private val context: Context) {
         }
     }
 
-    /** 播报文本。refAudio/refText/instruct 走 ZipVoice 克隆（P0：Kokoro 多音色）。线程安全：串行播放。 */
+    /** 播报文本。vits/kokoro 优先，sherpa 全失败时 fallback 到 Android 系统 TTS（Plan C）。 */
     fun say(text: String, voice: VoiceConfig?): SayResult {
         val wake = wakeLock()
         try {
+            // Plan C：sherpa TTS 不可用（模型缺失/加载失败）→ 系统 TTS 兜底（保证出声）
+            val t = try {
+                tts()
+            } catch (e: SpeechUnavailable) {
+                Log.w("SpeechEngine", "sherpa TTS 不可用（${e.message}），fallback 到系统 TTS")
+                return systemTtsFallback(text)
+            } ?: return systemTtsFallback(text)
+            if (t == null) return systemTtsFallback(text)
             synchronized(this) {
-                val t = tts() ?: throw SpeechUnavailable("TTS 模型未安装（scripts/fetch-models）")
                 interrupt()
                 playing.set(true)
                 val sampleRate = t.sampleRate()
@@ -207,6 +217,18 @@ class SpeechEngine(private val context: Context) {
                     acquire(60_000)
                 }
         }.getOrNull()
+
+    /** Plan C：Android 系统 TTS 兜底——零模型依赖、保证出声 */
+    private fun systemTtsFallback(text: String): SayResult {
+        if (!systemTts.isReady()) {
+            throw SpeechUnavailable("系统 TTS 也不可用（无中文语音引擎）")
+        }
+        val ok = systemTts.speak(text)
+        if (!ok) {
+            Log.w("SpeechEngine", "系统 TTS 播报可能未完成")
+        }
+        return SayResult("speaker")
+    }
 
     fun interrupt() {
         playing.set(false)
