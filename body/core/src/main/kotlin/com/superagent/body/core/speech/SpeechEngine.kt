@@ -128,6 +128,24 @@ class SpeechEngine(private val context: Context) {
         }
     }
 
+    /** DS-014 诊断：TTS 引擎状态（vits/kokoro/system 哪个可用） */
+    fun ttsStatus(): Map<String, Any> {
+        val sherpaReady = try {
+            tts() != null
+        } catch (e: Exception) {
+            false
+        }
+        return mapOf(
+            "sherpaReady" to sherpaReady,
+            "systemTtsReady" to systemTts.isReady(),
+            "activeEngine" to when {
+                sherpaReady -> "sherpa"
+                systemTts.isReady() -> "system"
+                else -> "none"
+            },
+        )
+    }
+
     fun isReady(): Map<String, Boolean> = mapOf(
         "asr" to hasAsset("sherpa/models/sensevoice-ctc-int8-zh/model.onnx"),
         "tts" to (hasAsset("sherpa/models/vits-zh-hf-fanchen-C/model.onnx") ||
@@ -157,13 +175,12 @@ class SpeechEngine(private val context: Context) {
     fun say(text: String, voice: VoiceConfig?): SayResult {
         val wake = wakeLock()
         try {
-            // Plan C：sherpa TTS 不可用（模型缺失/加载失败）→ 系统 TTS 兜底（保证出声）
             val t = try {
                 tts()
             } catch (e: SpeechUnavailable) {
-                Log.w("SpeechEngine", "sherpa TTS 不可用（${e.message}），fallback 到系统 TTS")
-                return systemTtsFallback(text)
-            } ?: return systemTtsFallback(text)
+                logTtsError("sherpa unavailable, fallback to system TTS", e)
+                null
+            }
             if (t == null) return systemTtsFallback(text)
             synchronized(this) {
                 interrupt()

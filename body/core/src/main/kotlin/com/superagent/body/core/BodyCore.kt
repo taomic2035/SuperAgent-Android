@@ -279,6 +279,16 @@ class BodyCore(
             emptyOk(req)
         }
 
+        // DS-014 诊断：TTS 引擎状态（哪个可用、active 是哪个）
+        server.rpc("speech.status") { req ->
+            val status = speech.ttsStatus()
+            ok(req, buildJsonObject {
+                put("sherpaReady", status["sherpaReady"] == true)
+                put("systemTtsReady", status["systemTtsReady"] == true)
+                put("activeEngine", status["activeEngine"]?.toString() ?: "unknown")
+            })
+        }
+
         server.rpc("speech.voiceprintEnroll", SPEECH_RPC_TIMEOUT_MS) { req ->
             val name = params(req).string("name") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 name")
             runCatching { speech.enroll(name) }
