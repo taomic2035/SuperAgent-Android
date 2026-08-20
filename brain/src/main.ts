@@ -71,6 +71,8 @@ async function main(): Promise<void> {
   rebuildSidecars(modelTier)
 
   let agent = new Agent({
+    // U2-B01：设备动作必须串行——pi 默认 parallel 可能并发下发多个 tap/swipe
+    toolExecution: "sequential",
     initialState: {
       systemPrompt: localOnly ? buildChatOnlyPrompt(persona) : buildSystemPrompt(persona, skills.skills),
       model: resolved.model,
@@ -110,6 +112,7 @@ async function main(): Promise<void> {
     rebuildSidecars(modelTier) // 相关性判官跟随新模型层；local 层清空、backup 层无视觉
     const nextModel = modelTier === "backup" ? resolved.backupModel! : resolved.localModel!
     agent = new Agent({
+      toolExecution: "sequential",
       initialState: {
         // 切到 local = 离线闲聊铁律；backup 保留全部工具（仅丢视觉，工具仍可用）
         systemPrompt: modelTier === "local" ? buildChatOnlyPrompt(persona) : buildSystemPrompt(persona, skills.skills),
@@ -131,6 +134,12 @@ async function main(): Promise<void> {
     try {
       await agent.prompt(input)
       llmFailures = 0
+      // U2-B01：abort 后 prompt 正常 resolve——检查停止标志判 aborted（不能报 success/failed）
+      if (isStopRequested()) {
+        reportFinish("aborted", "用户已停止")
+        finishRun("failed", "用户停止")
+        return
+      }
       reportFinish(getRun().finishVerified ? "success" : "failed", getRun().finishVerified ? "任务完成" : "未完成即收笔")
     } catch (err) {
       llmFailures++
@@ -190,7 +199,9 @@ async function main(): Promise<void> {
           }
         } else if (kind === "stop_request") {
           requestStop()
-          console.log("[brain] 收到用户停止请求")
+          // U2-B01：直接 abort 当前 pi run（不只靠 beforeToolCall 下一轮拦截）
+          try { agent.abort() } catch { /* agent 可能已完成 */ }
+          console.log("[brain] 收到用户停止请求，已 abort 当前运行")
         }
       }
       await sleep(500)
