@@ -11,7 +11,7 @@ import { loadPersonas } from "./personas/personas.ts"
 import { buildSystemPrompt, buildChatOnlyPrompt } from "./personas/promptBuilder.ts"
 import { beginRun, hasResumableRun, resumeRun, finishRun, peekRun, buildResumeContext, getRun } from "./runState.ts"
 import { env } from "./env.ts"
-import { initBrainEvents, reportPromptStart, reportFinish, isStopRequested, clearStop, requestStop } from "./ipc/brainEventReporter.ts"
+import { initBrainEvents, reportPromptStart, reportFinish, isStopRequested, clearStop, requestStop, requestPause, resumeFromPause } from "./ipc/brainEventReporter.ts"
 import type { AsrResult, BodyEvent, SkillListResult } from "./ipc/types.ts"
 
 const BODY_URL = env("BODY_URL", "http://127.0.0.1:8765")
@@ -225,9 +225,15 @@ async function main(): Promise<void> {
           }
         } else if (kind === "stop_request") {
           requestStop()
-          // U2-B01：直接 abort 当前 pi run（不只靠 beforeToolCall 下一轮拦截）
           try { agent.abort() } catch { /* agent 可能已完成 */ }
           console.log("[brain] 收到用户停止请求，已 abort 当前运行")
+        } else if (kind === "pause_request") {
+          // I3：暂停——阻断下一动作（beforeToolCall 检查 isPaused），当前动作完成自然停
+          requestPause()
+          console.log("[brain] 收到暂停请求，下一动作将等待恢复")
+        } else if (kind === "resume_request") {
+          resumeFromPause()
+          console.log("[brain] 收到恢复请求，继续执行")
         }
       }
       await sleep(500)

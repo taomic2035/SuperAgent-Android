@@ -11,6 +11,7 @@ let seq = 0
 let taskId = "none"
 let stepIndex = 0
 let stopRequested = false
+let pauseRequested = false
 /** U2-H03：brain boot 会话标识——重启后嵌入 taskId，UI 侧安全重置 seq 水位 */
 let bootSession = `boot-${Date.now()}`
 
@@ -22,6 +23,7 @@ export function initBrainEvents(client: BodyClient): void {
 
 export function requestStop(): void {
   stopRequested = true
+  pauseRequested = false // 停止优先于暂停
 }
 
 export function isStopRequested(): boolean {
@@ -30,6 +32,19 @@ export function isStopRequested(): boolean {
 
 export function clearStop(): void {
   stopRequested = false
+}
+
+/** I3：暂停/恢复——暂停阻断动作工具但可恢复（stop 是终态不可恢复） */
+export function requestPause(): void {
+  pauseRequested = true
+}
+
+export function resumeFromPause(): void {
+  pauseRequested = false
+}
+
+export function isPaused(): boolean {
+  return pauseRequested
 }
 
 async function emit(state: BrainEvent["state"], displayText: string, extra?: Partial<BrainEvent>): Promise<void> {

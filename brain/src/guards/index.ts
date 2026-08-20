@@ -3,7 +3,7 @@ import { addTrace, getRun } from "../runState.ts"
 import type { ScreenResult } from "../ipc/types.ts"
 import { redactText } from "./redact.ts"
 import { ReActGuard } from "./reactGuard.ts"
-import { isStopRequested, reportActBefore, reportActDone } from "../ipc/brainEventReporter.ts"
+import { isStopRequested, isPaused, reportActBefore, reportActDone } from "../ipc/brainEventReporter.ts"
 
 /** 驳回证据入 trace 前的脱敏（身份证/卡号/密码类值不打入历史）。 */
 function redactForTrace(s: string): string {
@@ -74,9 +74,13 @@ export function markFinishRejected(evidence: string, reason: string): void {
 export async function beforeToolCall(
   context: BeforeToolCallContext,
 ): Promise<{ block: true; reason: string; terminate: true } | undefined> {
-  // UI-0：用户停止请求（悬浮层"停止"→voice 事件 stop_request）——立即阻断一切动作工具
+  // UI-0：用户停止请求——立即阻断一切动作工具（终态不可恢复）
   if (isStopRequested()) {
     return { block: true, reason: "用户已请求停止。不要再执行任何动作，直接收尾。", terminate: true }
+  }
+  // I3：暂停请求——阻断动作但等待恢复（非终态，可继续）
+  if (isPaused() && !ABORT_EXEMPT_TOOLS.has(context.toolCall.name)) {
+    return { block: true, reason: "任务已暂停。等待用户操作面板后继续。", terminate: false }
   }
   // U2-B03：动作下发前上报 act（UI 显示"正在..."时动作即将开始，不是已完成）
   if (TRACE_TOOLS.has(context.toolCall.name)) {

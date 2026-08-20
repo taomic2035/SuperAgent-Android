@@ -143,11 +143,14 @@ class FloatingUiService : android.app.Service() {
         when (ui.state) {
             UiStateController.UiState.IDLE, UiStateController.UiState.OFFLINE, UiStateController.UiState.MINI ->
                 showIdlePanel()
-            // U2-#34：终态（完成/失败/停止）点球先展示结果摘要，再提供"新任务"入口重置到 IDLE
             UiStateController.UiState.COMPLETED, UiStateController.UiState.FAILED, UiStateController.UiState.STOPPED -> {
                 showResultPanel()
             }
-            else -> togglePanel() // 运行中/暂停/等待确认 → 任务控制面板
+            else -> {
+                // I3：运行中点球 → 先发 pause_request（阻断下一动作），再展开控制面板
+                UiBus.events?.emit("voice", buildJsonObject { put("kind", "pause_request") })
+                togglePanel()
+            }
         }
     }
 
@@ -275,6 +278,14 @@ class FloatingUiService : android.app.Service() {
             }
         }
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, 20, 0, 0) }
+        // I3：继续按钮——发 resume_request 解除暂停
+        row.addView(Button(this).apply {
+            text = "继续"
+            setOnClickListener {
+                UiBus.events?.emit("voice", buildJsonObject { put("kind", "resume_request") })
+                closePanel()
+            }
+        }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         row.addView(Button(this).apply {
             text = "停止"
             setOnClickListener {
