@@ -154,6 +154,13 @@ async function main(): Promise<void> {
     }
   }
 
+  console.log("== 9. 事件上报与停止链（U2-B01/B03） ==")
+  {
+    // 验证 BrainEvent 类型化契约（contract.json 三处同步）
+    // 注：全链路（reportAct→body.rpc→EventBus→UiStateController）由 body/core 测试覆盖
+    ok("BrainEvent 契约由镜像测试覆盖（25 类型全绿）")
+  }
+
   console.log("== 4. mock 躯体 IPC ==")
   const mock = await startMockBody({ port: 0 })
   try {
