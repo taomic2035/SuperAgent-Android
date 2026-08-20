@@ -42,6 +42,10 @@ android {
 
     testOptions {
         unitTests.isReturnDefaultValues = true
+        // P2-02：JUnit 5 需要 Platform 才能被发现（common 模块同配置）
+        unitTests.all {
+            it.useJUnitPlatform()
+        }
     }
 }
 
