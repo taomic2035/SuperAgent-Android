@@ -57,15 +57,26 @@ export function buildTools(
         setBaseline(screen)
         let enriched = screen
         // 感知 L1：body 已给截图引用且有识别器 → 取图送 VLM，marks 并入（识别失败 fail-open 留空）。
-        // 注意：VLM 返回的是截图像素坐标（body 长边 1600），control.tap 用的是屏幕像素——
-        // 换算因子（屏幕分辨率/截图尺寸）待真机标定后在此处启用线性缩放。
+        // 坐标换算：VLM 返回截图像素（body 长边 1600），control.tap 用屏幕像素（1152×2256）。
+        // 因子 = 屏幕 / 截图（body ScreenshotService scale=1600/max(w,h) → 竖屏 2256/1600=1.41）。
         if (screen.screenshotRef && vision) {
           try {
             const buf = await body.blob(screen.screenshotRef)
             const marks = await vision(buf.toString("base64"))
-            enriched = marks.length
-              ? { ...screen, marks, pageTexts: marks.map((m) => m.text) }
-              : screen
+            if (marks.length) {
+              const SCREEN_W = 1152
+              const SCREEN_H = 2256
+              const SHOT_LONG_EDGE = 1600
+              const scale = SCREEN_H / SHOT_LONG_EDGE // 竖屏因子（横屏时用 SCREEN_W/SHOT_LONG_EDGE）
+              enriched = {
+                ...screen,
+                marks: marks.map((m) => ({
+                  ...m,
+                  center: { x: Math.round(m.center.x * scale), y: Math.round(m.center.y * scale) },
+                })),
+                pageTexts: marks.map((m) => m.text),
+              }
+            }
           } catch {
             enriched = screen // 取图/识别失败：保留 body 原始结果
           }
