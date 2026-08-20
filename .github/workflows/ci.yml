@@ -36,6 +36,7 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
       - uses: android-actions/setup-android@v3
+      - run: chmod +x gradlew
       - run: ./gradlew :common:test :core:testDebugUnitTest --console=plain
       # assembleDebug 需要 third/ 下的 .so（gitignored，CI 无真机）
       # 真机构建留给本地/设备流水线
