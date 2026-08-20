@@ -168,9 +168,7 @@ class OfflineTts(
         text: String,
         sid: Int = 0,
         speed: Float = 1.0f,
-        // 本项目修改（DS-007/010）：返回 Int?（boxed Integer）匹配 JNI invoke([F)Ljava/lang/Integer;
-        // 上游声明 Int（primitive）导致 JNI 反射找不到方法 → lambda desugar 桥丢或匿名类签名不匹配
-        callback: (samples: FloatArray) -> Int??
+        callback: (samples: FloatArray) -> Int
     ): GeneratedAudio {
         return generateWithCallbackImpl(
             ptr,
@@ -191,7 +189,7 @@ class OfflineTts(
     fun generateWithConfigAndCallback(
         text: String,
         config: GenerationConfig,
-        callback: (samples: FloatArray) -> Int?
+        callback: (samples: FloatArray) -> Int
     ): GeneratedAudio {
         return generateWithConfigImpl(ptr, text, config, callback)
     }
@@ -251,7 +249,7 @@ class OfflineTts(
         text: String,
         sid: Int = 0,
         speed: Float = 1.0f,
-        callback: (samples: FloatArray) -> Int?
+        callback: (samples: FloatArray) -> Int
     ): GeneratedAudio
 
 
@@ -259,7 +257,7 @@ class OfflineTts(
         ptr: Long,
         text: String,
         config: GenerationConfig,
-        callback: ((samples: FloatArray) -> Int?)?
+        callback: ((samples: FloatArray) -> Int)?
     ): GeneratedAudio
 
     companion object {

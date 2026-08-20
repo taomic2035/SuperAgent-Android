@@ -45,9 +45,8 @@ class SpeechEngine(private val context: Context) {
     @Volatile private var tts: OfflineTts? = null
     @Volatile private var extractor: SpeakerEmbeddingExtractor? = null
     @Volatile private var manager: SpeakerEmbeddingManager? = null
-    /** DS-016：vits 构造失败标记——失败后不再重试（直接 system TTS）
-     * DS-016b：暂时跳过 vits 构造（native 阻塞根因未明，先用系统 TTS 通过 TC-12，P1 再修 vits） */
-    @Volatile private var vitsFailed = true  // 暂时 true：跳过 vits，直接 system TTS
+    /** DS-016：vits 构造失败标记——失败后不再重试（直接 system TTS） */
+    @Volatile private var vitsFailed = false  // 恢复 false——重新尝试 TTS
     private val persisted = mutableMapOf<String, MutableList<FloatArray>>()
 
     private val playing = AtomicBoolean(false)
@@ -217,8 +216,8 @@ class SpeechEngine(private val context: Context) {
                             onBargeInEvent?.invoke()  // AD-12：通知 EventBus → brain
                         }
                     }
-                    val callback = object : Function1<FloatArray, Int?> {
-                        override fun invoke(samples: FloatArray): Int? {
+                    val callback = object : Function1<FloatArray, Int> {
+                        override fun invoke(samples: FloatArray): Int {
                             if (!playing.get()) return 1
                             val pcm = ShortArray(samples.size)
                             for (i in samples.indices) pcm[i] = (samples[i] * 32767).toInt().toShort()
@@ -377,110 +376,133 @@ class SpeechEngine(private val context: Context) {
 
     private fun tts(): OfflineTts? {
         tts?.let { return it }
-        if (vitsFailed) return null  // DS-016：构造已失败，不再卡 10 秒
+        if (vitsFailed) return null
         synchronized(this) {
             tts?.let { return it }
             if (vitsFailed) return null
-            // G3 Plan B（BD-04.2 规格：vits-zh 可一键切换）：Kokoro 两档在真机均 native exit(1)
-            // （fp32 PSS 808MB / int8 零内存压力均干净退），vits 走独立路径（lexicon+jieba，无 espeak）
-            // ——存在即优先，Kokoro 全缺才返回 null。
+
+            // ============ 路径 A：kokoro int8（全文件路径，跳过 assets mmap）============
+            // DS-016c：vits 构造在华为 native 层阻塞（根因不明），kokoro int8 之前不卡只是内存不够 exit(1)
+            // → 尝试 kokoro int8 + 全文件路径 + 全量落盘
+            val kokoroInt8Dir = "sherpa/models/kokoro-int8-multi-lang-v1_0"
+            if (hasAsset("$kokoroInt8Dir/model.int8.onnx")) {
+                val kTarget = File(context.filesDir, "sherpa/kokoro-int8")
+                val kModel = File(kTarget, "model.int8.onnx")
+                if (!kModel.isFile) {
+                    // 全量拷贝（model+voices+tokens+espeak）
+                    if (kTarget.exists()) kTarget.deleteRecursively()
+                    copyAssetsDir(kokoroInt8Dir, kTarget)
+                    logTtsError("kokoro-int8 files copied", extra = "dir=${kTarget.absolutePath} files=${kTarget.list()?.size ?: 0}")
+                }
+                val kVoices = File(kTarget, "voices.bin")
+                val kTokens = File(kTarget, "tokens.txt")
+                val kEspeak = File(kTarget, "espeak-ng-data")
+                if (!kModel.isFile || !kVoices.isFile || !kTokens.isFile || !File(kEspeak, "lang").isDirectory) {
+                    logTtsError("kokoro-int8 files incomplete", extra = "model=${kModel.isFile} voices=${kVoices.isFile} tokens=${kTokens.isFile} espeak=${File(kEspeak,"lang").isDirectory}")
+                } else {
+                    val kConfig = OfflineTtsConfig(
+                        model = OfflineTtsModelConfig(
+                            kokoro = OfflineTtsKokoroModelConfig(
+                                model = kModel.absolutePath,
+                                voices = kVoices.absolutePath,
+                                tokens = kTokens.absolutePath,
+                                dataDir = kEspeak.absolutePath,
+                                lang = "auto",
+                            ),
+                            numThreads = 2,
+                        ),
+                        ruleFsts = "",
+                        ruleFars = "",
+                        maxNumSentences = 1,
+                    )
+                    logTtsError("kokoro-int8 all-file init", extra = "model=${kModel.absolutePath}")
+                    val kExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
+                    val kFuture = kExecutor.submit<OfflineTts> {
+                        try {
+                            OfflineTts(assets, kConfig)
+                        } catch (e: Throwable) {
+                            logTtsError("kokoro constructor THREW ${e.javaClass.simpleName}: ${e.message}")
+                            throw e
+                        }
+                    }
+                    val kEngine = try {
+                        kFuture.get(15, java.util.concurrent.TimeUnit.SECONDS)
+                    } catch (e: Throwable) {
+                        kFuture.cancel(true)
+                        kExecutor.shutdownNow()
+                        val cause = if (e is java.util.concurrent.ExecutionException) e.cause ?: e else e
+                        logTtsError("kokoro-int8 constructor FAILED", cause as? Exception, "type=${cause.javaClass.simpleName}")
+                        null  // kokoro 失败，不设 vitsFailed（继续试 vits）
+                    }
+                    kExecutor.shutdown()
+                    if (kEngine != null) {
+                        logTtsError("kokoro-int8 constructed OK", extra = "sampleRate=${kEngine.sampleRate()}")
+                        return kEngine.also { tts = it }
+                    }
+                }
+            }
+
+            // ============ 路径 B：vits（原有逻辑）============
             val vitsDir = "sherpa/models/vits-zh-hf-fanchen-C"
-            if (hasAsset("$vitsDir/model.onnx")) {
-                // DS-015：assets mmap 在华为阻塞 → 全量文件路径（model 也落盘）
-                // DS-013 教训：OfflineTts(null, config) SIGSEGV → 仍传 assets（非 null）
-                //   但 config 内所有路径指向 filesDir 绝对路径（C++ 检测到绝对路径走标准 I/O）
+            if (hasAsset("$vitsDir/model.onnx") && !vitsFailed) {
                 val fileDir = vitsFileDir
                 val modelFile = File(fileDir, "model.onnx")
                 val lexiconFile = File(fileDir, "lexicon.txt")
                 val tokensFile = File(fileDir, "tokens.txt")
                 val dictDir = File(fileDir, "dict").absolutePath
                 if (!modelFile.isFile || !lexiconFile.isFile || !tokensFile.isFile) {
-                    logTtsError("vits files incomplete", extra = "dir=$fileDir files=${File(fileDir).list()?.joinToString(",")}")
-                    throw SpeechUnavailable("vits 文件不完整（model/lexicon/tokens 缺失）")
-                }
-                val fstPaths = listOf("phone.fst", "date.fst", "number.fst", "new_heteronym.fst")
-                    .map { File(fileDir, it) }
-                    .filter { it.isFile }
-                    .joinToString(",") { it.absolutePath }
-                logTtsError("vits all-file init", extra = "model=${modelFile.absolutePath} lexicon=${lexiconFile.absolutePath} tokens=${tokensFile.absolutePath} dict=$dictDir fst=$fstPaths")
-                val config = OfflineTtsConfig(
-                    model = OfflineTtsModelConfig(
-                        vits = OfflineTtsVitsModelConfig(
-                            model = modelFile.absolutePath,      // 全部绝对文件路径
-                            lexicon = lexiconFile.absolutePath,
-                            tokens = tokensFile.absolutePath,
-                            dataDir = dictDir,
+                    logTtsError("vits files incomplete")
+                    vitsFailed = true
+                } else {
+                    val fstPaths = listOf("phone.fst", "date.fst", "number.fst", "new_heteronym.fst")
+                        .map { File(fileDir, it) }
+                        .filter { it.isFile }
+                        .joinToString(",") { it.absolutePath }
+                    val config = OfflineTtsConfig(
+                        model = OfflineTtsModelConfig(
+                            vits = OfflineTtsVitsModelConfig(
+                                model = modelFile.absolutePath,
+                                lexicon = lexiconFile.absolutePath,
+                                tokens = tokensFile.absolutePath,
+                                dataDir = dictDir,
+                            ),
+                            numThreads = 2,
                         ),
-                        numThreads = 4,
-                    ),
-                    ruleFsts = fstPaths,
-                    ruleFars = "",
-                    maxNumSentences = 1,
-                )
-                // DS-015：构造超时保护（10s）——华为 assets mmap 可能无限阻塞
-                val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
-                val future = executor.submit<OfflineTts> {
-                    try {
-                        OfflineTts(assets, config)
+                        ruleFsts = fstPaths,
+                        ruleFars = "",
+                        maxNumSentences = 1,
+                    )
+                    logTtsError("vits all-file init", extra = "model=${modelFile.absolutePath}")
+                    val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+                    val future = executor.submit<OfflineTts> {
+                        try {
+                            OfflineTts(assets, config)
+                        } catch (e: Throwable) {
+                            logTtsError("vits constructor THREW ${e.javaClass.simpleName}: ${e.message}")
+                            throw e
+                        }
+                    }
+                    val engine = try {
+                        future.get(10, java.util.concurrent.TimeUnit.SECONDS)
                     } catch (e: Throwable) {
-                        // DS-016：catch Throwable——Error 族（NoSuchMethodError/UnsatisfiedLinkError）也要日志
-                        logTtsError("vits constructor THREW ${e.javaClass.simpleName}", e as? Exception, "msg=${e.message}")
-                        throw e
+                        future.cancel(true)
+                        executor.shutdownNow()
+                        vitsFailed = true
+                        val cause = if (e is java.util.concurrent.ExecutionException) e.cause ?: e else e
+                        logTtsError("vits constructor FAILED", cause as? Exception, "type=${cause.javaClass.simpleName} vitsFailed=true")
+                        null
+                    }
+                    executor.shutdown()
+                    if (engine != null) {
+                        logTtsError("vits constructed OK", extra = "sampleRate=${engine.sampleRate()}")
+                        return engine.also { tts = it }
                     }
                 }
-                val engine = try {
-                    future.get(10, java.util.concurrent.TimeUnit.SECONDS)
-                } catch (e: java.util.concurrent.TimeoutException) {
-                    future.cancel(true)
-                    executor.shutdownNow()
-                    vitsFailed = true  // DS-016：不再重试
-                    logTtsError("vits constructor TIMEOUT (10s)", extra = "vitsFailed=true, fallback to system TTS permanently")
-                    throw SpeechUnavailable("vits 构造超时（华为 assets mmap 阻塞）")
-                } catch (e: java.util.concurrent.ExecutionException) {
-                    executor.shutdownNow()
-                    vitsFailed = true  // DS-016：不再重试
-                    val cause = e.cause ?: e
-                    logTtsError("vits constructor ExecutionException → ${cause.javaClass.simpleName}: ${cause.message}", extra = "vitsFailed=true")
-                    throw SpeechUnavailable("vits 构造失败：${cause.javaClass.simpleName}: ${cause.message}")
-                } catch (e: Throwable) {
-                    executor.shutdownNow()
-                    vitsFailed = true  // DS-016：不再重试
-                    logTtsError("vits constructor UNEXPECTED ${e.javaClass.simpleName}: ${e.message}", extra = "vitsFailed=true")
-                    throw SpeechUnavailable("vits 构造异常：${e.javaClass.simpleName}")
-                }
-                executor.shutdown()
-                logTtsError("vits constructed OK", extra = "sampleRate=${engine.sampleRate()} speakers=${engine.numSpeakers()}")
-                return engine.also { tts = it }
             }
-            // G3.1：int8 优先（fp32 实测 PSS 尖峰 808MB → native exit(1)；
-            // int8 体积 114MB，session 内存预期 ~400MB）。int8 缺失时退回 fp32。
-            val int8Dir = "sherpa/models/kokoro-int8-multi-lang-v1_0"
-            val fp32Dir = "sherpa/models/kokoro-multi-lang-v1_0"
-            val useInt8 = hasAsset("$int8Dir/model.int8.onnx")
-            val modelDir = if (useInt8) int8Dir else fp32Dir
-            val modelFile = if (useInt8) "model.int8.onnx" else "model.onnx"
-            if (!hasAsset("$modelDir/$modelFile")) return null
-            // native 层对坏 dataDir 是硬 exit(1)（整进程死、无异常可捕），必须先验后建：
-            // 宁可返回可 typed 处理的 SpeechUnavailable，也不让进程被 native 拖死
-            if (!File(espeakDir, "lang").isDirectory) {
-                throw SpeechUnavailable("espeak-ng-data 不完整（lang/ 缺失，拷贝失败或包内缺数据）")
-            }
-            val config = OfflineTtsConfig(
-                model = OfflineTtsModelConfig(
-                    kokoro = OfflineTtsKokoroModelConfig(
-                        model = "$modelDir/$modelFile",
-                        voices = "$modelDir/voices.bin",
-                        tokens = "$modelDir/tokens.txt",
-                        dataDir = espeakDir,
-                        lang = "auto",
-                    ),
-                    numThreads = 4,
-                ),
-                ruleFsts = "",
-                ruleFars = "",
-                maxNumSentences = 1,
-            )
-            return OfflineTts(assets, config).also { tts = it }
+
+            // 全部失败
+            logTtsError("all TTS engines failed")
+            return null
         }
     }
 

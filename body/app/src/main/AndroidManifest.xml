@@ -41,7 +41,7 @@
         <service
             android:name=".BodyService"
             android:exported="false"
-            android:foregroundServiceType="dataSync|mediaProjection|microphone">
+            android:foregroundServiceType="dataSync|mediaProjection">
         </service>
 
         <service
