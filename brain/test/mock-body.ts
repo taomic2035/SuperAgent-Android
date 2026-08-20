@@ -105,6 +105,8 @@ export function startMockBody(options: MockBodyOptions): Promise<{ port: number;
         return void sendJson(res, 200, reply({ text: "帮我点一杯奶茶", confidence: 0.92, durationMs: 2400 }))
       case "speech.say":
         return void sendJson(res, 200, reply({ route: "speaker" }))
+      case "speech.playBytes":
+        return void sendJson(res, 200, reply({ route: "speaker" }))
       case "speech.interrupt":
         return void sendJson(res, 200, reply({}))
       case "speech.voiceprintEnroll":

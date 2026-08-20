@@ -25,6 +25,7 @@ import type {
   VoiceprintIdentifyResult,
 } from "../ipc/types.ts"
 import type { Persona } from "../personas/promptBuilder.ts"
+import { speak } from "../tts/index.ts"
 
 function idem(tool: string, toolCallId: string): string {
   return `${tool}-${toolCallId}`
@@ -42,7 +43,6 @@ export function buildTools(
   vision?: VisionMarksFn,
 ): AgentTool<any>[] {
   const personaMap = new Map(Object.entries(personas))
-  const say = (personaName: string | undefined) => personaMap.get(personaName ?? "")?.voice ?? personas.assistant.voice
 
   return [
     {
@@ -234,9 +234,11 @@ export function buildTools(
         persona: Type.Optional(Type.String()),
       }),
       execute: async (_id, params: any) => {
-        const voice = say(params.persona)
-        const result = await body.rpc<SayResult>("speech.say", { text: params.text, voice })
-        return { content: [{ type: "text", text: "已播报" }], details: result }
+        const p = personaMap.get(params.persona ?? "") ?? personas.assistant
+        // BD-04 三层链：在线 edge/azure（音质优先）→ 本地 sherpa → 系统 TTS（speak 内部降级）
+        const outcome = await speak(body, params.text, { bodyVoice: p.voice, edgeVoice: p.voice.edgeVoice })
+        const via = outcome.via === "online" ? `在线（${outcome.provider}${outcome.synthMs ? ` 合成${outcome.synthMs}ms` : " 缓存"}）` : "本地"
+        return { content: [{ type: "text", text: `已播报（${via}）` }], details: outcome.result }
       },
     },
     {

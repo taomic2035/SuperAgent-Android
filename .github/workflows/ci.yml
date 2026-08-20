@@ -24,6 +24,9 @@ jobs:
       - run: npm run contract
       - run: npm run smoke
       - run: npm run integration
+      - run: npm run tts-chain
+        env:
+          RUN_ONLINE_TTS: '1'
 
   body:
     runs-on: ubuntu-latest

@@ -39,9 +39,12 @@ class SystemTts(private val context: Context) {
         return ready
     }
 
-    /** 播报文本（阻塞直到播完或超时）。返回是否成功。 */
+    /** 播报文本（阻塞直到播完或超时）。@Synchronized 防并发——先 stop 清队列再播。 */
+    @Synchronized
     fun speak(text: String): Boolean {
         if (!isReady()) return false
+        // 先清空可能残留的队列（之前的 utterance 可能堵着）
+        tts?.stop()
         val done = CountDownLatch(1)
         var success = false
         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
@@ -55,7 +58,7 @@ class SystemTts(private val context: Context) {
                 done.countDown()
             }
         })
-        val result = tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "super-agent-${System.currentTimeMillis()}")
+        val result = tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "sa-${System.currentTimeMillis()}")
         if (result != TextToSpeech.SUCCESS) return false
         done.await(30, TimeUnit.SECONDS)
         return success

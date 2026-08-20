@@ -6,6 +6,8 @@ export interface Persona {
   tone: string
   voice: {
     voice: string
+    /** 在线 TTS 音色（edge/azure 通用名）；缺省回落 zh-CN-XiaoxiaoNeural */
+    edgeVoice?: string
     langCode: string
     speed: number
     refAudio: string

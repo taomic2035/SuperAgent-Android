@@ -11,6 +11,7 @@ import { loadPersonas } from "./personas/personas.ts"
 import { buildSystemPrompt, buildChatOnlyPrompt } from "./personas/promptBuilder.ts"
 import { beginRun, hasResumableRun, resumeRun, finishRun, peekRun, buildResumeContext, getRun } from "./runState.ts"
 import { env } from "./env.ts"
+import { speak } from "./tts/index.ts"
 import { initBrainEvents, reportPromptStart, reportFinish, isStopRequested, clearStop, requestStop, requestPause, resumeFromPause } from "./ipc/brainEventReporter.ts"
 import type { AsrResult, BodyEvent, SkillListResult } from "./ipc/types.ts"
 
@@ -23,6 +24,9 @@ const VOICE_MODE = env("VOICE_MODE", "0") === "1"
 const LLM_STREAM_TIMEOUT_MS = 120_000
 
 let responseBuffer = ""
+
+/** 语音循环自动播报用的当前 persona 音色（main() 启动时设置，voiceTurn 消费） */
+let speakVoice: { bodyVoice: unknown; edgeVoice?: string } | undefined
 
 async function main(): Promise<void> {
   const body = new BodyClient(BODY_URL, BODY_TOKEN)
@@ -41,6 +45,7 @@ async function main(): Promise<void> {
 
   const personaConfig = loadPersonas()
   const persona = personaConfig.personas[PERSONA_NAME] ?? personaConfig.personas.assistant
+  speakVoice = { bodyVoice: persona.voice, edgeVoice: persona.voice.edgeVoice }
   console.log(`[brain] 角色：${persona.name}（${PERSONA_NAME}）`)
 
   let skills: SkillListResult = { skills: [] }
@@ -359,7 +364,7 @@ async function voiceTurn(body: BodyClient, prompt: (input: string) => Promise<vo
     if (responseBuffer.trim()) {
       const { redactText } = await import("./guards/redact.ts")
       const safe = redactText(responseBuffer.trim().slice(0, 120))
-      await body.rpc("speech.say", { text: safe }).catch(() => undefined)
+      await speak(body, safe, speakVoice).catch(() => undefined)
     }
     finishRun(getRun().finishVerified ? "success" : "closed")
     console.log("\n---")

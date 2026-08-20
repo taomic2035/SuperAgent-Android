@@ -7,6 +7,7 @@
       "tone": "直接、务实",
       "voice": {
         "voice": "kokoro_zh",
+        "edgeVoice": "zh-CN-XiaoxiaoNeural",
         "langCode": "zh",
         "speed": 1.0,
         "refAudio": "",
@@ -21,6 +22,7 @@
       "tone": "温柔、亲切",
       "voice": {
         "voice": "kokoro_zh",
+        "edgeVoice": "zh-CN-XiaoyiNeural",
         "langCode": "zh",
         "speed": 0.95,
         "refAudio": "",

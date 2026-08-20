@@ -46,11 +46,13 @@ class SpeechEngine(private val context: Context) {
     @Volatile private var extractor: SpeakerEmbeddingExtractor? = null
     @Volatile private var manager: SpeakerEmbeddingManager? = null
     /** DS-016：vits 构造失败标记——失败后不再重试（直接 system TTS） */
-    @Volatile private var vitsFailed = false  // 恢复 false——重新尝试 TTS
+    @Volatile private var vitsFailed = true  // 跳过 sherpa TTS（native 层问题），直接 system TTS
     private val persisted = mutableMapOf<String, MutableList<FloatArray>>()
 
     private val playing = AtomicBoolean(false)
     private var activeTrack: AudioTrack? = null
+    private var activePlayer: android.media.MediaPlayer? = null
+    private var activeWake: android.os.PowerManager.WakeLock? = null
 
     private val recorder = AudioRecorder(File(context.cacheDir, "audio"))
 
@@ -278,7 +280,77 @@ class SpeechEngine(private val context: Context) {
             runCatching { it.release() }
         }
         activeTrack = null
+        activePlayer?.let {
+            runCatching { it.stop() }
+            runCatching { it.release() }
+        }
+        activePlayer = null
+        releaseActiveWake()
         stopBargeInListener()
+    }
+
+    /**
+     * 在线播报入口（BD-04）：brain 端 edge/azure 合成的 MP3 字节，内存播放零落盘。
+     * 与 say() 同等待遇：wakeLock + barge-in VAD + interrupt 可打断。
+     */
+    fun playAudioBytes(data: ByteArray): SayResult {
+        if (data.size < 512) throw SpeechUnavailable("音频数据过小（${data.size}B）")
+        interrupt()
+        playing.set(true)
+        // AD-12 Barge-in：在线音色播放同样可被用户开口打断
+        if (vadEngine.isReady()) {
+            startBargeInListener {
+                interrupt()
+                onBargeInEvent?.invoke()
+            }
+        }
+        val wake = wakeLock()
+        activeWake = wake
+        val mp = android.media.MediaPlayer()
+        activePlayer = mp
+        try {
+            mp.setDataSource(BytesMediaDataSource(data))
+            mp.setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ASSISTANT)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build(),
+            )
+            mp.prepare()
+            mp.setOnCompletionListener {
+                it.release()
+                if (activePlayer === it) activePlayer = null
+                playing.set(false)
+                stopBargeInListener()
+                releaseActiveWake()
+            }
+            mp.start()
+        } catch (e: Throwable) {
+            runCatching { mp.release() }
+            if (activePlayer === mp) activePlayer = null
+            playing.set(false)
+            stopBargeInListener()
+            releaseActiveWake()
+            throw SpeechUnavailable("在线音频播放失败：${e.message}")
+        }
+        return SayResult("speaker")
+    }
+
+    private fun releaseActiveWake() {
+        activeWake?.let { runCatching { it.release() } }
+        activeWake = null
+    }
+
+    /** MediaPlayer 内存数据源：避免临时文件（用户要求播报链路零中间文件）。API 23+。 */
+    private class BytesMediaDataSource(private val bytes: ByteArray) : android.media.MediaDataSource() {
+        override fun readAt(position: Long, buffer: ByteArray, offset: Int, size: Int): Int {
+            if (position >= bytes.size) return -1
+            val n = minOf(size.toLong(), bytes.size - position).toInt()
+            System.arraycopy(bytes, position.toInt(), buffer, offset, n)
+            return n
+        }
+        override fun getSize(): Long = bytes.size.toLong()
+        override fun close() {}
     }
 
     /** AD-12：开始监听用户说话（TTS 播放时调用——用户开口 ≤300ms 触发 onBargeIn） */

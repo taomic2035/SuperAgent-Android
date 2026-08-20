@@ -12,7 +12,7 @@
 - **悬浮交互**：侧边控制球 + 穿透状态条 + 输入面板 + 暂停/继续/停止 + OFFLINE 心跳
 - **技能飞轮**：learn → run（签名步进校验）→ feedback（candidate→verified→active）
 - **模型韧性**：GLM 主 → 备用云端 → 本地闲聊三档降级链 + 120s 流超时
-- **端侧语音**：SenseVoice ASR + vits-zh TTS + eres2net 声纹（sherpa-onnx 全家桶）
+- **端侧语音**：SenseVoice ASR + 三层播报链（在线 edge/azure 音色 → 本地 sherpa 流式 → 系统 TTS 兜底）+ eres2net 声纹
 
 ### 架构
 

@@ -279,6 +279,38 @@ class BodyCore(
             emptyOk(req)
         }
 
+        // BD-04 在线播报主路：brain 端 edge/azure 合成的 MP3 字节（base64），内存播放零落盘
+        server.rpc("speech.playBytes") { req ->
+            val audioB64 = params(req).string("audio") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 audio")
+            val bytes = android.util.Base64.decode(audioB64, android.util.Base64.DEFAULT)
+            if (bytes.size !in 512..(5 * 1024 * 1024)) return@rpc bad(req, "BAD_PARAMS", "音频大小非法: ${bytes.size}B")
+            val result = speech.playAudioBytes(bytes)
+            ok(req, result)
+        }
+
+        // TC-12 验收：播放预生成的音频文件（filesDir/audio-*.mp3）
+        server.rpc("speech.playFile") { req ->
+            val file = params(req).string("file") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 file")
+            val audioFile = java.io.File(context.filesDir, file)
+            if (!audioFile.isFile) return@rpc bad(req, "NOT_FOUND", "音频文件不存在: $file")
+            Thread {
+                runCatching {
+                    val mp = android.media.MediaPlayer()
+                    mp.setDataSource(audioFile.absolutePath)
+                    mp.setAudioAttributes(
+                        android.media.AudioAttributes.Builder()
+                            .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
+                            .build(),
+                    )
+                    mp.prepare()
+                    mp.start()
+                    mp.setOnCompletionListener { it.release() }
+                }.onFailure { Log.e("BodyCore", "playFile failed", it) }
+            }.start()
+            ok(req, SayResult("speaker"))
+        }
+
         // DS-014 诊断：TTS 引擎状态（哪个可用、active 是哪个）
         server.rpc("speech.status") { req ->
             val status = speech.ttsStatus()
