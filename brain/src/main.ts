@@ -251,6 +251,8 @@ async function main(): Promise<void> {
         } else if (kind === "resume_request") {
           resumeFromPause()
           console.log("[brain] 收到恢复请求，继续执行")
+        } else if (kind === "barge_in") {
+          console.log("[brain] 用户打断了播报（barge-in），等待下一轮输入")
         }
       }
       await sleep(500)
