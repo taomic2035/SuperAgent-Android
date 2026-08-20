@@ -23,6 +23,7 @@ jobs:
       - run: npm run typecheck
       - run: npm run contract
       - run: npm run smoke
+      - run: npm run integration
 
   body:
     runs-on: ubuntu-latest
