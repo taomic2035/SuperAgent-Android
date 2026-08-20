@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  brain:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: brain
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: brain/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run contract
+      - run: npm run smoke
+
+  body:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: body
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - run: ./gradlew :common:test :core:testDebugUnitTest --console=plain
+      # assembleDebug 需要 third/ 下的 .so（gitignored，CI 无真机）
+      # 真机构建留给本地/设备流水线
