@@ -158,18 +158,16 @@ class SpeechEngine(private val context: Context) {
                 try {
                     track.play()
                     val sid = voice?.speakerId ?: 0
-                    // DS-007 流式恢复：用匿名内部类（object）替代 lambda——D8 不 desugar 匿名类，
-                    // JNI 反射调用 Function1.invoke() 桥不会丢。保留流式播放（首包 ~100ms）。
-                    val callback = object : Function1<FloatArray, Int> {
-                        override fun invoke(samples: FloatArray): Int {
-                            if (!playing.get()) return 1
-                            val pcm = ShortArray(samples.size)
-                            for (i in samples.indices) pcm[i] = (samples[i] * 32767).toInt().toShort()
-                            track.write(pcm, 0, pcm.size)
-                            return 1
-                        }
+                    // DS-010 终修：generateWithCallback 的 JNI 桥无论 lambda/匿名类都签名不匹配
+                    // （JNI 期望 invoke([F)Ljava/lang/Integer;，Kotlin 声明返回 primitive int）。
+                    // 改用 generate()（无回调，全量生成后一次写入）——零风险，首包 ~300-500ms 可接受。
+                    // 若需恢复流式：需修改 sherpa Tts.kt 声明为 Int? 或提供 Java 接口适配层。
+                    val audio = t.generate(text, sid, voice?.speed ?: 1.0f)
+                    if (playing.get() && audio.samples.isNotEmpty()) {
+                        val pcm = ShortArray(audio.samples.size)
+                        for (i in audio.samples.indices) pcm[i] = (audio.samples[i] * 32767).toInt().toShort()
+                        track.write(pcm, 0, pcm.size)
                     }
-                    t.generateWithCallback(text, sid, voice?.speed ?: 1.0f, callback)
                 } finally {
                     runCatching { track.stop() }
                     runCatching { track.release() }
