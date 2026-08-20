@@ -14,7 +14,7 @@ import kotlinx.serialization.json.jsonPrimitive
  */
 class UiStateController(private val events: EventBus) {
 
-    enum class UiState { OFFLINE, MINI, IDLE, THINKING, RUNNING, PAUSING, PAUSED, AWAITING_CONFIRM, BLOCKED, COMPLETED, FAILED }
+    enum class UiState { OFFLINE, MINI, IDLE, THINKING, RUNNING, PAUSING, PAUSED, STOPPING, STOPPED, AWAITING_CONFIRM, BLOCKED, COMPLETED, FAILED }
 
     data class Snapshot(
         val state: UiState,
@@ -88,7 +88,9 @@ class UiStateController(private val events: EventBus) {
             "blocked" -> transition(UiState.BLOCKED, ev.displayText.ifBlank { "需要处理" })
             "finish" -> when (ev.resultKind) {
                 "success" -> { unreadResult = true; transition(UiState.COMPLETED, ev.displayText.ifBlank { "已完成" }) }
-                "aborted" -> transition(UiState.PAUSED, ev.displayText.ifBlank { "已暂停" })
+                "aborted" -> { unreadResult = true; transition(UiState.STOPPED, ev.displayText.ifBlank { "已停止" }) }
+                "paused" -> transition(UiState.PAUSED, ev.displayText.ifBlank { "已暂停" })
+                "unknown_side_effect" -> { unreadResult = true; transition(UiState.FAILED, ev.displayText.ifBlank { "停止中·正在确认设备状态" }) }
                 else -> { unreadResult = true; transition(UiState.FAILED, ev.displayText.ifBlank { "执行失败" }) }
             }
             "error" -> { unreadResult = true; transition(UiState.FAILED, ev.displayText.ifBlank { "出错" }) }
@@ -154,6 +156,8 @@ class UiStateController(private val events: EventBus) {
         UiState.RUNNING -> "执行中 · ${recent.lastOrNull() ?: ""}"
         UiState.PAUSING -> "正在暂停…"
         UiState.PAUSED -> "已暂停"
+        UiState.STOPPING -> "正在停止…"
+        UiState.STOPPED -> "已停止"
         UiState.AWAITING_CONFIRM -> "等待确认"
         UiState.BLOCKED -> "需要处理 · ${recent.lastOrNull() ?: ""}"
         UiState.COMPLETED -> "已完成 · ${recent.lastOrNull() ?: ""}"

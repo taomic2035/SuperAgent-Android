@@ -146,9 +146,62 @@ async function main(): Promise<void> {
     }
   }
 
+  // U2-B02：文字输入不依附 VOICE_MODE——常驻事件泵独立消费
+  // U2-B04：心跳独立定时器——不被 await prompt() 阻塞
+  const eventPump = async (): Promise<void> => {
+    let lastEventSeq = 0
+    let lastHeartbeat = Date.now()
+    for (;;) {
+      let events: BodyEvent[] = []
+      try {
+        events = await body.events(lastEventSeq)
+      } catch {
+        await sleep(3000)
+        continue
+      }
+      // U2-B04：心跳 5s 一次，独立于 prompt 循环
+      if (Date.now() - lastHeartbeat > 5000) {
+        lastHeartbeat = Date.now()
+        void body.rpc("brain.event", {
+          taskId: "heartbeat", seq: Date.now(), state: "heartbeat",
+          displayText: "", requiresUser: "none", timestamp: Date.now(),
+        }).catch(() => undefined)
+      }
+      for (const ev of events) {
+        lastEventSeq = Math.max(lastEventSeq, ev.seq)
+        if (ev.type !== "voice") continue
+        const kind = (ev.payload as Record<string, unknown>)?.kind
+        if (kind === "text_input") {
+          const text = String((ev.payload as Record<string, unknown>)?.text ?? "").trim()
+          if (text) {
+            console.log(`你(输入)> ${text}`)
+            beginRun(text)
+            resetSensitiveSession()
+            console.log("助手> ")
+            responseBuffer = ""
+            try {
+              await promptAgent(text)
+              process.stdout.write("\n\n")
+              finishRun(getRun().finishVerified ? "success" : "closed")
+            } catch (err) {
+              console.log(`[brain] 任务失败：${err instanceof Error ? err.message : String(err)}`)
+              finishRun("crashed", err instanceof Error ? err.message : String(err))
+            }
+          }
+        } else if (kind === "stop_request") {
+          requestStop()
+          console.log("[brain] 收到用户停止请求")
+        }
+      }
+      await sleep(500)
+    }
+  }
+
   if (VOICE_MODE) {
     await runVoiceLoop(body, promptAgent)
   } else {
+    // U2-B02：REPL 模式也启动事件泵——悬浮层文字指令可被消费
+    void eventPump()
     await runRepl(promptAgent)
   }
 }
@@ -210,7 +263,6 @@ async function runRepl(prompt: (input: string) => Promise<void>): Promise<void> 
 async function runVoiceLoop(body: BodyClient, prompt: (input: string) => Promise<void>): Promise<void> {
   console.log("\n[brain] 语音模式就绪。按躯体通知栏按钮触发对话。\n")
   let lastEventSeq = 0
-  let lastHeartbeat = Date.now()
   for (;;) {
     let events: BodyEvent[] = []
     try {
@@ -219,42 +271,12 @@ async function runVoiceLoop(body: BodyClient, prompt: (input: string) => Promise
       await sleep(2000)
       continue
     }
-    // UI-0 slice2（UX-11）：brain 心跳——5s 一次（短于 body 10s OFFLINE 阈值），fire-and-forget
-    if (Date.now() - lastHeartbeat > 5000) {
-      lastHeartbeat = Date.now()
-      void body.rpc("brain.event", {
-        taskId: "heartbeat", seq: Date.now(), state: "heartbeat",
-        displayText: "", requiresUser: "none", timestamp: Date.now(),
-      }).catch(() => undefined)
-    }
     for (const ev of events) {
       lastEventSeq = Math.max(lastEventSeq, ev.seq)
-      if (ev.type !== "voice") continue
-      const kind = (ev.payload as Record<string, unknown>)?.kind
-      if (kind === "trigger") {
+      if (ev.type === "voice" && (ev.payload as Record<string, unknown>)?.kind === "trigger") {
         await voiceTurn(body, prompt)
-      } else if (kind === "text_input") {
-        // UI-0：悬浮层文字指令（免 ASR，docs/12 §5.2——同队列不并发，进行中忽略新指令）
-        const text = String((ev.payload as Record<string, unknown>)?.text ?? "").trim()
-        if (text) {
-          console.log(`你(输入)> ${text}`)
-          beginRun(text)
-          resetSensitiveSession()
-          console.log("助手> ")
-          responseBuffer = ""
-          try {
-            await prompt(text)
-            process.stdout.write("\n\n")
-            finishRun(getRun().finishVerified ? "success" : "closed")
-          } catch (err) {
-            console.log(`[brain] 任务失败：${err instanceof Error ? err.message : String(err)}`)
-            finishRun("crashed", err instanceof Error ? err.message : String(err))
-          }
-        }
-      } else if (kind === "stop_request") {
-        requestStop()
-        console.log("[brain] 收到用户停止请求")
       }
+      // text_input/stop_request/heartbeat 由 eventPump 常驻处理（U2-B02/B04）
     }
     await sleep(500)
   }

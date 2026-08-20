@@ -56,7 +56,7 @@ export function actDisplay(tool: string, args: Record<string, unknown>): string 
     case "control.selectSpec":
       return `正在选择「${label ?? "选项"}」`
     case "control.launch":
-      return typeof args?.pkg === "string" ? `正在打开应用` : "正在打开应用"
+      return `正在打开应用`
     case "control.typeText":
       return "正在输入文字"
     case "control.swipe":
@@ -66,14 +66,21 @@ export function actDisplay(tool: string, args: Record<string, unknown>): string 
     case "control.home":
       return "正在回到桌面"
     case "skill.run":
-      return typeof args?.name === "string" ? `正在执行技能` : "正在执行技能"
+      return `正在执行技能`
     default:
       return "正在操作屏幕"
   }
 }
 
-export async function reportAct(tool: string, args: Record<string, unknown>): Promise<void> {
-  await emit("act", `第 ${++stepIndex} 步 · ${actDisplay(tool, args)}`)
+/** U2-B03：动作下发前上报（UI 显示"正在..."时动作即将开始）。 */
+export async function reportActBefore(tool: string, args: Record<string, unknown>): Promise<void> {
+  await emit("act", actDisplay(tool, args), { stepIndex: stepIndex + 1 })
+}
+
+/** U2-B03：动作结束后上报（UI 推进到下一步或显示结果）。 */
+export async function reportActDone(tool: string, args: Record<string, unknown>): Promise<void> {
+  stepIndex++
+  await emit("act_done", `${stepIndex}. ${actDisplay(tool, args).replace("正在", "")}`, { stepIndex })
 }
 
 export async function reportHitlWait(text: string): Promise<void> {

@@ -74,7 +74,7 @@ class UiStateControllerTest {
     fun `finish aborted 进入 PAUSED`() {
         emitBrain("task-1", 1, "prompt_start", "开始")
         emitBrain("task-1", 2, "finish", "用户已停止", resultKind = "aborted")
-        assertEquals(UiStateController.UiState.PAUSED, controller.state)
+        assertEquals(UiStateController.UiState.STOPPED, controller.state)
     }
 
     @Test

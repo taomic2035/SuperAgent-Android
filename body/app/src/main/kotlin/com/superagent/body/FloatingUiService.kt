@@ -209,22 +209,36 @@ class FloatingUiService : android.app.Service() {
         UiStateController.UiState.RUNNING -> "执行中"
         UiStateController.UiState.PAUSING -> "正在暂停…"
         UiStateController.UiState.PAUSED -> "已暂停"
+        UiStateController.UiState.STOPPING -> "正在停止…"
+        UiStateController.UiState.STOPPED -> "已停止"
         UiStateController.UiState.AWAITING_CONFIRM -> "等待确认"
         UiStateController.UiState.BLOCKED -> "需要处理"
         UiStateController.UiState.COMPLETED -> "已完成"
         UiStateController.UiState.FAILED -> "失败"
     }
 
+    // U2-B06：保存截图前三表面的精确可见状态，采集后按原样恢复（不是只恢复控制球）
+    private var savedBallVisible = true
+    private var savedStripVisible = false
+    private var savedPanelOpen = false
+
     private fun hideAll() {
         android.os.Handler(mainLooper).post {
+            savedBallVisible = ball?.visibility == View.VISIBLE
+            savedStripVisible = strip?.visibility == View.VISIBLE
+            savedPanelOpen = panelOpen
             ball?.visibility = View.GONE
             strip?.visibility = View.GONE
-            closePanel()
+            if (panelOpen) closePanel()
         }
     }
 
     private fun showCurrent() {
-        android.os.Handler(mainLooper).post { ball?.visibility = View.VISIBLE }
+        android.os.Handler(mainLooper).post {
+            ball?.visibility = if (savedBallVisible) View.VISIBLE else View.GONE
+            strip?.visibility = if (savedStripVisible) View.VISIBLE else View.GONE
+            // 面板不自动恢复（用户可能已在截图期间改变意图；状态条恢复由下一事件驱动）
+        }
     }
 
     companion object {
