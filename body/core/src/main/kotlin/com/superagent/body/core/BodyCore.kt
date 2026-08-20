@@ -85,11 +85,20 @@ class BodyCore(
                 return@rpc RpcResponse.failure(req.id, "A11Y_DISCONNECTED", "无障碍服务未连接，请在设置中开启", "a11y")
             }
             val mode = req.params?.jsonObject?.get("mode")?.toString()?.trim('"') ?: "auto"
-            // L1 视觉（BD-02.2 第一步）：已授权屏幕捕获时返回截图引用，VLM 识别在 brain 侧；
-            // 未授权自动回退 a11y（typed note，不硬失败）
+            // L1 视觉（BD-02.2）+ L2 auto 路由（BD-02.3）：a11y 节点不足或含 WebView 时自动 fallback 视觉
             if (mode == "vision" || mode == "auto") {
-                // P0：auto 仍走 a11y（视觉待 brain 侧 VLM 通路就绪后启用），仅显式 vision 走截图
-                if (mode == "vision") {
+                if (mode == "auto") {
+                    // L2 路由：a11y 有效节点 ≥5 且无 WebView → 直接用 a11y（不走截图）
+                    val a11yScreen = perceiver.perceive("a11y", sensitiveSession.inSensitiveSession)
+                    sensitiveSession.onForeground(a11yScreen.appPackage)
+                    val nodeCount = a11yScreen.marks?.size ?: 0
+                    val hasWebView = a11yScreen.nodes.orEmpty().any { it.label.contains("WebView", ignoreCase = true) }
+                    if (nodeCount >= 5 && !hasWebView) {
+                        return@rpc ok(req, a11yScreen)
+                    }
+                    // a11y 不足——落入 vision 路径
+                }
+                if (mode == "vision" || mode == "auto") {
                     // 审计 P1-06：敏感会话内禁止视觉导出（截图出设备 = 隐私边界）
                     if (sensitiveSession.inSensitiveSession) {
                         return@rpc RpcResponse.failure(req.id, "VISION_BLOCKED", "敏感会话内禁止视觉导出（已回退 a11y 可用）", "privacy")
