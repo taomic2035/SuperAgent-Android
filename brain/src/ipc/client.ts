@@ -68,10 +68,23 @@ export class BodyClient {
   }
 
   /**
-   * @param timeoutMs 客户端超时必须 > body 侧对应 handler 的 RPC 超时，
-   * 否则 body 还在等（如 HITL 等用户）brain 已判死。长耗时调用按工具显式传大值。
+   * @param timeoutMs 客户端超时必须 > body 侧对应 handler 的 RPC 超时
+   * @param retryOnTimeout 网络超时自动重试一次（幂等方法安全；非幂等由 idempotencyKey 保护）
    */
   async rpc<T>(method: string, params: unknown, idempotencyKey?: string, timeoutMs = this.timeoutMs): Promise<T> {
+    try {
+      return await this.rawRpcWithTimeout(method, params, idempotencyKey, timeoutMs)
+    } catch (err) {
+      if (err instanceof BodyUnavailableError && !err.message.includes("401")) {
+        // 网络瞬断：500ms 后重试一次（不重试认证失败）
+        await new Promise((r) => setTimeout(r, 500))
+        return this.rawRpcWithTimeout(method, params, idempotencyKey, timeoutMs)
+      }
+      throw err
+    }
+  }
+
+  private async rawRpcWithTimeout<T>(method: string, params: unknown, idempotencyKey?: string, timeoutMs = this.timeoutMs): Promise<T> {
     const response = await this.rawRpc({ id: nextId++, method, params, idempotencyKey }, timeoutMs)
     if (!response.ok) {
       throw new BodyRpcError(response.error.code, response.error.message, response.error.reason, (response.error as { nonce?: string }).nonce)
