@@ -45,6 +45,8 @@ class SpeechEngine(private val context: Context) {
     @Volatile private var tts: OfflineTts? = null
     @Volatile private var extractor: SpeakerEmbeddingExtractor? = null
     @Volatile private var manager: SpeakerEmbeddingManager? = null
+    /** DS-016：vits 构造失败标记——失败后不再重试（直接 system TTS） */
+    @Volatile private var vitsFailed = false
     private val persisted = mutableMapOf<String, MutableList<FloatArray>>()
 
     private val playing = AtomicBoolean(false)
@@ -374,8 +376,10 @@ class SpeechEngine(private val context: Context) {
 
     private fun tts(): OfflineTts? {
         tts?.let { return it }
+        if (vitsFailed) return null  // DS-016：构造已失败，不再卡 10 秒
         synchronized(this) {
             tts?.let { return it }
+            if (vitsFailed) return null
             // G3 Plan B（BD-04.2 规格：vits-zh 可一键切换）：Kokoro 两档在真机均 native exit(1)
             // （fp32 PSS 808MB / int8 零内存压力均干净退），vits 走独立路径（lexicon+jieba，无 espeak）
             // ——存在即优先，Kokoro 全缺才返回 null。
@@ -428,16 +432,19 @@ class SpeechEngine(private val context: Context) {
                 } catch (e: java.util.concurrent.TimeoutException) {
                     future.cancel(true)
                     executor.shutdownNow()
-                    logTtsError("vits constructor TIMEOUT (10s)", extra = "likely assets mmap blocked on Huawei")
+                    vitsFailed = true  // DS-016：不再重试
+                    logTtsError("vits constructor TIMEOUT (10s)", extra = "vitsFailed=true, fallback to system TTS permanently")
                     throw SpeechUnavailable("vits 构造超时（华为 assets mmap 阻塞）")
                 } catch (e: java.util.concurrent.ExecutionException) {
                     executor.shutdownNow()
+                    vitsFailed = true  // DS-016：不再重试
                     val cause = e.cause ?: e
-                    logTtsError("vits constructor ExecutionException → ${cause.javaClass.simpleName}: ${cause.message}")
+                    logTtsError("vits constructor ExecutionException → ${cause.javaClass.simpleName}: ${cause.message}", extra = "vitsFailed=true")
                     throw SpeechUnavailable("vits 构造失败：${cause.javaClass.simpleName}: ${cause.message}")
                 } catch (e: Throwable) {
                     executor.shutdownNow()
-                    logTtsError("vits constructor UNEXPECTED ${e.javaClass.simpleName}: ${e.message}")
+                    vitsFailed = true  // DS-016：不再重试
+                    logTtsError("vits constructor UNEXPECTED ${e.javaClass.simpleName}: ${e.message}", extra = "vitsFailed=true")
                     throw SpeechUnavailable("vits 构造异常：${e.javaClass.simpleName}")
                 }
                 executor.shutdown()
