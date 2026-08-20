@@ -78,8 +78,11 @@ async function synthesizeAzure(text: string, voice: string, timeoutMs: number): 
       signal: controller.signal,
     })
     if (!res.ok) throw new Error(`azure tts HTTP ${res.status}`)
+    const len = Number(res.headers.get("content-length") ?? "0")
+    if (len > 10 * 1024 * 1024) throw new Error(`azure tts 响应过大（${len}B）`)
     const audio = Buffer.from(await res.arrayBuffer())
     if (audio.length < 512) throw new Error(`azure tts 返回音频过小（${audio.length}B）`)
+    if (audio.length > 10 * 1024 * 1024) throw new Error(`azure tts 音频超上限（${audio.length}B）`)
     return audio
   } finally {
     clearTimeout(timer)
@@ -89,6 +92,7 @@ async function synthesizeAzure(text: string, voice: string, timeoutMs: number): 
 /** edge 免费通道（Edge「大声朗读」接口，无 key；非官方，失败由调用方降级本地）。 */
 async function synthesizeEdge(text: string, voice: string, timeoutMs: number): Promise<Buffer> {
   const tts = new MsEdgeTTS()
+  let timer: NodeJS.Timeout | undefined
   try {
     const synth = (async () => {
       await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3)
@@ -104,11 +108,12 @@ async function synthesizeEdge(text: string, voice: string, timeoutMs: number): P
       return audio
     })()
     const timeout = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error(`edge tts 超时（${timeoutMs}ms）`)), timeoutMs)
+      timer = setTimeout(() => reject(new Error(`edge tts 超时（${timeoutMs}ms）`)), timeoutMs)
     })
     const audio = await Promise.race([synth, timeout])
     return audio
   } finally {
+    clearTimeout(timer) // codex-P1-06：超时/完成后都清 timer，不留悬挂句柄
     try {
       tts.close()
     } catch {

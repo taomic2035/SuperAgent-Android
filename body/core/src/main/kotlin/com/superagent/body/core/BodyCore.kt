@@ -146,28 +146,14 @@ class BodyCore(
             val p = params(req)
             val x = p.int("x") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 x")
             val y = p.int("y") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 y")
-            when (val r = actionExecutor.execute(com.superagent.body.core.control.ActionExecutor.Action.Tap(x, y))) {
-                is com.superagent.body.core.control.ActionExecutor.Result.GateBlocked ->
-                    return@rpc gateFailure(req, r.violation)
-                is com.superagent.body.core.control.ActionExecutor.Result.Failed ->
-                    return@rpc ok(req, ActionResult(false, null, r.reason))
-                is com.superagent.body.core.control.ActionExecutor.Result.Ok ->
-                    ok(req, r.actionResult)
-            }
+            execAction(req, com.superagent.body.core.control.ActionExecutor.Action.Tap(x, y))
         }
 
         server.rpc("control.longPress") { req ->
             val p = params(req)
             val x = p.int("x") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 x")
             val y = p.int("y") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 y")
-            when (val r = actionExecutor.execute(com.superagent.body.core.control.ActionExecutor.Action.LongPress(x, y, p.int("durationMs")?.toLong() ?: 600L))) {
-                is com.superagent.body.core.control.ActionExecutor.Result.GateBlocked ->
-                    return@rpc gateFailure(req, r.violation)
-                is com.superagent.body.core.control.ActionExecutor.Result.Failed ->
-                    return@rpc ok(req, ActionResult(false, null, r.reason))
-                is com.superagent.body.core.control.ActionExecutor.Result.Ok ->
-                    ok(req, r.actionResult)
-            }
+            execAction(req, com.superagent.body.core.control.ActionExecutor.Action.LongPress(x, y, p.int("durationMs")?.toLong() ?: 600L))
         }
 
         server.rpc("control.swipe") { req ->
@@ -176,57 +162,34 @@ class BodyCore(
             val fromY = p.int("fromY") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 fromY")
             val toX = p.int("toX") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 toX")
             val toY = p.int("toY") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 toY")
-            ok(req, controller.swipe(fromX, fromY, toX, toY, p.int("durationMs")?.toLong() ?: 300L))
+            execAction(req, com.superagent.body.core.control.ActionExecutor.Action.Swipe(fromX, fromY, toX, toY, p.int("durationMs")?.toLong() ?: 300L))
         }
 
         server.rpc("control.typeText") { req ->
-            val p = params(req)
-            val text = p.string("text") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 text")
-            ok(req, controller.typeText(text))
+            val text = params(req).string("text") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 text")
+            execAction(req, com.superagent.body.core.control.ActionExecutor.Action.TypeText(text))
         }
 
         server.rpc("control.selectOption") { req ->
             val p = params(req)
             val label = p.string("label") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 label")
             val near = p.near()
-            when (val r = actionExecutor.execute(
-                com.superagent.body.core.control.ActionExecutor.Action.Select(label, near?.x, near?.y),
-            )) {
-                is com.superagent.body.core.control.ActionExecutor.Result.GateBlocked ->
-                    return@rpc gateFailure(req, r.violation)
-                is com.superagent.body.core.control.ActionExecutor.Result.Failed ->
-                    return@rpc ok(req, ActionResult(false, null, r.reason))
-                is com.superagent.body.core.control.ActionExecutor.Result.Ok ->
-                    ok(req, r.actionResult)
-            }
+            execAction(req, com.superagent.body.core.control.ActionExecutor.Action.Select(label, near?.x, near?.y))
         }
 
         server.rpc("control.selectSpec") { req ->
             val p = params(req)
             val label = p.string("label") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 label")
             val near = p.near()
-            when (val r = actionExecutor.execute(
-                com.superagent.body.core.control.ActionExecutor.Action.SelectSpec(label, near?.x, near?.y),
-            )) {
-                is com.superagent.body.core.control.ActionExecutor.Result.GateBlocked ->
-                    return@rpc gateFailure(req, r.violation)
-                is com.superagent.body.core.control.ActionExecutor.Result.Failed ->
-                    return@rpc ok(req, ActionResult(false, null, r.reason))
-                is com.superagent.body.core.control.ActionExecutor.Result.Ok ->
-                    ok(req, r.actionResult)
-            }
+            execAction(req, com.superagent.body.core.control.ActionExecutor.Action.SelectSpec(label, near?.x, near?.y))
         }
 
-        server.rpc("control.back") { req -> ok(req, controller.back()) }
-        server.rpc("control.home") { req ->
-            sensitiveSession.onHome()
-            ok(req, controller.home())
-        }
+        server.rpc("control.back") { req -> execAction(req, com.superagent.body.core.control.ActionExecutor.Action.Back) }
+        server.rpc("control.home") { req -> execAction(req, com.superagent.body.core.control.ActionExecutor.Action.Home) }
 
         server.rpc("control.launch") { req ->
             val pkg = params(req).string("pkg") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 pkg")
-            sensitiveSession.onLaunch(pkg)
-            ok(req, controller.launch(pkg))
+            execAction(req, com.superagent.body.core.control.ActionExecutor.Action.Launch(pkg))
         }
 
         server.rpc("speech.asr", SPEECH_RPC_TIMEOUT_MS) { req ->
@@ -282,7 +245,12 @@ class BodyCore(
         // BD-04 在线播报主路：brain 端 edge/azure 合成的 MP3 字节（base64），内存播放零落盘
         server.rpc("speech.playBytes") { req ->
             val audioB64 = params(req).string("audio") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 audio")
-            val bytes = android.util.Base64.decode(audioB64, android.util.Base64.DEFAULT)
+            // codex-P1-06：非法 base64 在 RPC 线程抛异常会 500——转 BAD_PARAMS
+            val bytes = try {
+                android.util.Base64.decode(audioB64, android.util.Base64.DEFAULT)
+            } catch (e: IllegalArgumentException) {
+                return@rpc bad(req, "BAD_PARAMS", "audio 非法 base64")
+            }
             if (bytes.size !in 512..(5 * 1024 * 1024)) return@rpc bad(req, "BAD_PARAMS", "音频大小非法: ${bytes.size}B")
             val result = speech.playAudioBytes(bytes)
             ok(req, result)
@@ -291,6 +259,10 @@ class BodyCore(
         // TC-12 验收：播放预生成的音频文件（filesDir/audio-*.mp3）
         server.rpc("speech.playFile") { req ->
             val file = params(req).string("file") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 file")
+            // codex-P1-06：只允许 basename（拒绝 ../ 与路径分隔符，防越出 filesDir）
+            if (file.contains('/') || file.contains('\\') || file.contains("..")) {
+                return@rpc bad(req, "BAD_PARAMS", "file 只允许文件名（不允许路径）")
+            }
             val audioFile = java.io.File(context.filesDir, file)
             if (!audioFile.isFile) return@rpc bad(req, "NOT_FOUND", "音频文件不存在: $file")
             Thread {
@@ -473,6 +445,17 @@ class BodyCore(
     /** 坐标动作统一闸门（审计 P0-02/03：提交边界 + 敏感会话动作，全包含节点检查）。 */
     private fun gate(x: Int, y: Int): com.superagent.body.core.security.ActionGate.Violation? =
         com.superagent.body.core.security.ActionGate.violatingLabel(perceiver, sensitiveSession, x, y)
+
+    /** codex-P0-01 收编：全部 control.* RPC 统一经 ActionExecutor（闸门+执行+签名+事件一个不落） */
+    private suspend fun execAction(
+        req: com.superagent.common.RpcRequest,
+        action: com.superagent.body.core.control.ActionExecutor.Action,
+    ): RpcResponse =
+        when (val r = actionExecutor.execute(action)) {
+            is com.superagent.body.core.control.ActionExecutor.Result.GateBlocked -> gateFailure(req, r.violation)
+            is com.superagent.body.core.control.ActionExecutor.Result.Failed -> ok(req, ActionResult(false, null, r.reason))
+            is com.superagent.body.core.control.ActionExecutor.Result.Ok -> ok(req, r.actionResult)
+        }
 
     private fun gateFailure(req: com.superagent.common.RpcRequest, v: com.superagent.body.core.security.ActionGate.Violation): RpcResponse =
         when (v) {

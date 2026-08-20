@@ -33,7 +33,7 @@ class SpeechUnavailable(message: String) : Exception(message)
 /**
  * 端侧语音三件套（sherpa-onnx v1.13.2，模型来自 scripts/fetch-models）：
  * - ASR: SenseVoice（assets/sherpa/models/sensevoice-ctc-int8-zh/）
- * - TTS: Kokoro 多语言（assets/sherpa/models/kokoro-multi-lang-v1_0/）
+ * - TTS: BD-04 三层链——在线 playBytes（brain 端 edge/azure 合成）→ sherpa（kokoro/vits，华为真机构造失败时短路）→ 系统 TTS
  * - 声纹: 3D-Speaker eres2net（assets/sherpa/models/3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx）
  * 模型缺失时优雅降级：抛 SpeechUnavailable，由服务层转成体侧错误码。
  */
@@ -319,10 +319,13 @@ class SpeechEngine(private val context: Context) {
             mp.prepare()
             mp.setOnCompletionListener {
                 it.release()
-                if (activePlayer === it) activePlayer = null
-                playing.set(false)
-                stopBargeInListener()
-                releaseActiveWake()
+                // codex-P1-06：owner check——迟到的旧播放器回调不得动新播放器的状态/wake
+                if (activePlayer === it) {
+                    activePlayer = null
+                    playing.set(false)
+                    stopBargeInListener()
+                    releaseActiveWake()
+                }
             }
             mp.start()
         } catch (e: Throwable) {

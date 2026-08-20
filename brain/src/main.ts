@@ -193,6 +193,15 @@ async function main(): Promise<void> {
 
   // U2-B02：文字输入不依附 VOICE_MODE——常驻事件泵独立消费
   // U2-B04：心跳独立定时器——不被 await prompt() 阻塞
+  // codex-P0-04：泵内长任务只入队不 await——stop/pause 事件不被任务阻塞，随时可消费
+  // 任务串行链：REPL/文字输入/语音轮次/断点恢复共用一条链，天然互斥（无双 run 竞态）
+  let taskChain: Promise<void> = Promise.resolve()
+  const enqueueTask = (run: () => Promise<void>): Promise<void> => {
+    const next = taskChain.then(run).catch(() => undefined) // run 内部已自处理错误与 finishRun
+    taskChain = next
+    return next
+  }
+
   const eventPump = async (): Promise<void> => {
     let lastEventSeq = 0
     let lastHeartbeat = Date.now()
@@ -231,20 +240,25 @@ async function main(): Promise<void> {
           lastConsumedTextInputId = commandId
           const text = String((ev.payload as Record<string, unknown>)?.text ?? "").trim()
           if (text) {
-            console.log(`你(输入)> ${text}`)
-            beginRun(text)
-            resetSensitiveSession()
-            console.log("助手> ")
-            responseBuffer = ""
-            try {
-              await promptAgent(text)
-              process.stdout.write("\n\n")
-              finishRun(getRun().finishVerified ? "success" : "closed")
-            } catch (err) {
-              console.log(`[brain] 任务失败：${err instanceof Error ? err.message : String(err)}`)
-              finishRun("crashed", err instanceof Error ? err.message : String(err))
-            }
+            void enqueueTask(async () => {
+              console.log(`你(输入)> ${text}`)
+              beginRun(text)
+              resetSensitiveSession()
+              console.log("助手> ")
+              responseBuffer = ""
+              try {
+                await promptAgent(text)
+                process.stdout.write("\n\n")
+                finishRun(getRun().finishVerified ? "success" : "closed")
+              } catch (err) {
+                console.log(`[brain] 任务失败：${err instanceof Error ? err.message : String(err)}`)
+                finishRun("crashed", err instanceof Error ? err.message : String(err))
+              }
+            })
           }
+        } else if (kind === "trigger") {
+          // codex-P0-03：语音触发统一由常驻泵消费（原 runVoiceLoop 双循环与泵互抢事件）
+          void enqueueTask(() => voiceTurn(body, promptAgent))
         } else if (kind === "stop_request") {
           requestStop()
           try { agent.abort() } catch { /* agent 可能已完成 */ }
@@ -264,16 +278,17 @@ async function main(): Promise<void> {
     }
   }
 
+  // codex-P0-03：事件泵是唯一事件源，两种模式都启动（语音模式此前无泵——text_input/stop/heartbeat 不可达）
+  void eventPump()
   if (VOICE_MODE) {
-    await runVoiceLoop(body, promptAgent)
+    console.log("\n[brain] 语音模式就绪。按躯体通知栏按钮触发对话。\n")
+    await new Promise<never>(() => undefined) // 语音模式主协程仅保活，事件全由泵消费
   } else {
-    // U2-B02：REPL 模式也启动事件泵——悬浮层文字指令可被消费
-    void eventPump()
-    await runRepl(promptAgent)
+    await runRepl(promptAgent, enqueueTask)
   }
 }
 
-async function runRepl(prompt: (input: string) => Promise<void>): Promise<void> {
+async function runRepl(prompt: (input: string) => Promise<void>, enqueueTask: (run: () => Promise<void>) => Promise<void>): Promise<void> {
   const rl = createInterface({ input: stdin, output: stdout })
   console.log("\n[brain] 就绪。输入任务（如「帮我点一杯奶茶」），Ctrl+C 退出。\n")
   for (;;) {
@@ -295,58 +310,42 @@ async function runRepl(prompt: (input: string) => Promise<void>): Promise<void> 
       const saved = resumeRun()
       if (saved) {
         resetSensitiveSession()
-        try {
+        // codex-P0-04：REPL 任务也进串行链——与事件泵任务（text_input/语音轮次）互斥
+        await enqueueTask(async () => {
           console.log(`\n[brain] 恢复任务「${saved.goal}」，已带 ${saved.trace.length} 步历史`)
           console.log("助手> ")
           responseBuffer = ""
-          await prompt(buildResumeContext(saved))
-          process.stdout.write("\n\n")
-          finishRun(getRun().finishVerified ? "success" : "closed")
-        } catch (err) {
-          process.stdout.write("\n")
-          console.log(`[brain] 任务失败：${err instanceof Error ? err.message : String(err)}`)
-          finishRun("crashed", err instanceof Error ? err.message : String(err))
-        }
+          try {
+            await prompt(buildResumeContext(saved))
+            process.stdout.write("\n\n")
+            finishRun(getRun().finishVerified ? "success" : "closed")
+          } catch (err) {
+            process.stdout.write("\n")
+            console.log(`[brain] 任务失败：${err instanceof Error ? err.message : String(err)}`)
+            finishRun("crashed", err instanceof Error ? err.message : String(err))
+          }
+        })
       }
       continue
     }
-    beginRun(input)
-    resetSensitiveSession()
-    try {
+    // codex-P0-04：REPL 任务也进串行链（与恢复分支同构）
+    await enqueueTask(async () => {
+      beginRun(input)
+      resetSensitiveSession()
       console.log("\n助手> ")
       responseBuffer = ""
-      await prompt(input)
-      process.stdout.write("\n\n")
-      finishRun(getRun().finishVerified ? "success" : "closed")
-    } catch (err) {
-      process.stdout.write("\n")
-      console.log(`[brain] 任务失败：${err instanceof Error ? err.message : String(err)}`)
-      finishRun("crashed", err instanceof Error ? err.message : String(err))
-    }
+      try {
+        await prompt(input)
+        process.stdout.write("\n\n")
+        finishRun(getRun().finishVerified ? "success" : "closed")
+      } catch (err) {
+        process.stdout.write("\n")
+        console.log(`[brain] 任务失败：${err instanceof Error ? err.message : String(err)}`)
+        finishRun("crashed", err instanceof Error ? err.message : String(err))
+      }
+    })
   }
   rl.close()
-}
-
-async function runVoiceLoop(body: BodyClient, prompt: (input: string) => Promise<void>): Promise<void> {
-  console.log("\n[brain] 语音模式就绪。按躯体通知栏按钮触发对话。\n")
-  let lastEventSeq = 0
-  for (;;) {
-    let events: BodyEvent[] = []
-    try {
-      events = await body.events(lastEventSeq)
-    } catch {
-      await sleep(2000)
-      continue
-    }
-    for (const ev of events) {
-      lastEventSeq = Math.max(lastEventSeq, ev.seq)
-      if (ev.type === "voice" && (ev.payload as Record<string, unknown>)?.kind === "trigger") {
-        await voiceTurn(body, prompt)
-      }
-      // text_input/stop_request/heartbeat 由 eventPump 常驻处理（U2-B02/B04）
-    }
-    await sleep(500)
-  }
 }
 
 async function voiceTurn(body: BodyClient, prompt: (input: string) => Promise<void>): Promise<void> {
@@ -359,13 +358,10 @@ async function voiceTurn(body: BodyClient, prompt: (input: string) => Promise<vo
     console.log("助手> ")
     responseBuffer = ""
     await prompt(asr.text)
-    // U2-H06：TTS 只播报关键节点（收到/需处理/完成/失败），不逐步朗读模型全文
-    // 全文可能含金额/账号/验证码——用 redactText 脱敏 + 截断
-    if (responseBuffer.trim()) {
-      const { redactText } = await import("./guards/redact.ts")
-      const safe = redactText(responseBuffer.trim().slice(0, 120))
-      await speak(body, safe, speakVoice).catch(() => undefined)
-    }
+    // U2-H06 / codex-P1-05：TTS 只播固定关键节点文案，不朗读模型回复全文
+    // （全文可能含金额/账号/验证码——固定文案使"敏感内容不播报"不依赖脱敏正则覆盖）
+    const nodePhrase = getRun().finishVerified ? "任务完成。" : "任务结束，详情请看屏幕。"
+    await speak(body, nodePhrase, speakVoice).catch(() => undefined)
     finishRun(getRun().finishVerified ? "success" : "closed")
     console.log("\n---")
   } catch (err) {

@@ -42,6 +42,17 @@ class ActionExecutor(
         when (action) {
             is Action.Tap -> gate(action.x, action.y)?.let { return Result.GateBlocked(it) }
             is Action.LongPress -> gate(action.x, action.y)?.let { return Result.GateBlocked(it) }
+            // codex-P0-01 收编：swipe 起点也过坐标闸（起于敏感节点的滑动同拦）
+            is Action.Swipe -> gate(action.fromX, action.fromY)?.let { return Result.GateBlocked(it) }
+            // codex-P0-01 收编：敏感会话内输入文本需人工确认（nonce 绑文本摘要，HITL 展示将输入的内容）
+            is Action.TypeText -> {
+                val textLabel = action.text.take(12)
+                if (sensitive.needsExtraConfirm(textLabel)) {
+                    return Result.GateBlocked(
+                        ActionGate.Violation.SensitiveSession(textLabel, sensitive.issueNonce(textLabel)),
+                    )
+                }
+            }
             is Action.Select -> {
                 if (sensitive.needsExtraConfirm(action.label)) {
                     return Result.GateBlocked(
