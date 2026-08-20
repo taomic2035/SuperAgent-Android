@@ -6,8 +6,16 @@ import { verifyEvidence } from "../guards/finish.ts"
 import { redactScreen } from "../guards/redact.ts"
 import type { RelevanceCheck } from "../guards/relevance.ts"
 import type { VisionMarksFn } from "../guards/vision.ts"
-import { BodyRpcError } from "../ipc/client.ts"
+import { BodyRpcError, BodyUnavailableError } from "../ipc/client.ts"
 import type { BodyClient } from "../ipc/client.ts"
+
+/** body 断线时工具不崩溃——返回友好错误让模型感知并可重试 */
+function bodyUnavailableHint(err: unknown): string {
+  if (err instanceof BodyUnavailableError) {
+    return "躯体服务暂不可达（可能正在重启）。请等待几秒后重试本操作。如果持续失败，请通知用户检查躯体服务。"
+  }
+  return err instanceof Error ? err.message : String(err)
+}
 import type {
   ActionResult,
   AsrResult,
@@ -151,10 +159,10 @@ export function buildTools(
         label: Type.String({ description: "目标可见文字" }),
         near: Type.Optional(Type.Object({ x: Type.Number(), y: Type.Number() })),
       }),
-      execute: async (_id, params: any) => {
+      execute: async (toolCallId, params: any) => {
         let result: ActionResult
         try {
-          result = await body.rpc<ActionResult>("control.selectOption", params, idem("control.selectOption", _id))
+          result = await body.rpc<ActionResult>("control.selectOption", params, idem("control.selectOption", toolCallId))
         } catch (err) {
           if (err instanceof BodyRpcError && err.code === "COMMIT_BOUNDARY" && err.nonce) {
             throw new Error(
@@ -162,6 +170,7 @@ export function buildTools(
               "用户同意后重试本动作即可放行。通知文案由服务端生成，你不需要自己写确认文案。",
             )
           }
+          if (err instanceof BodyUnavailableError) throw new Error(bodyUnavailableHint(err))
           throw err
         }
         if (!result.located) throw new Error(result.note ?? `未找到可见文字「${params.label}」`)
