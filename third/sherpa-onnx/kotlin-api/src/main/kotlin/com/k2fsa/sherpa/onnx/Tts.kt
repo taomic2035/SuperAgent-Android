@@ -259,7 +259,7 @@ class OfflineTts(
         ptr: Long,
         text: String,
         config: GenerationConfig,
-        callback: ((samples: FloatArray) -> Int)?
+        callback: ((samples: FloatArray) -> Int?)?
     ): GeneratedAudio
 
     companion object {
