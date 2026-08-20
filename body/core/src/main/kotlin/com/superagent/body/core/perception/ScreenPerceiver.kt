@@ -75,6 +75,8 @@ class ScreenPerceiver(private val accessibilityService: () -> AccessibilityServi
         onWebViewSensitiveUrl: () -> Unit,
     ) {
         if (depth > 40) return
+        // 性能：跳过纯布局容器（无文字/无描述/不可见）——减少无效递归
+        if (depth > 0 && !node.isVisibleToUser) return
         val className = node.className?.toString() ?: ""
         if (className.contains("WebView", ignoreCase = true)) {
             onWebView()
