@@ -125,6 +125,12 @@ class UiStateController(private val events: EventBus) {
     private fun onVoice(payloadJson: String) {
         val obj = runCatching { Json.parseToJsonElement(payloadJson).jsonObject }.getOrNull() ?: return
         val kind = obj["kind"]?.jsonPrimitive?.content ?: return
+        // #26：暂停/停止请求即迁 PAUSING/STOPPING（终态由 brain 的 finish 事件 settle——paused/aborted）
+        when (kind) {
+            "pause_request" -> if (state == UiState.RUNNING || state == UiState.THINKING) transition(UiState.PAUSING, "暂停中·当前动作完成后停")
+            "stop_request" -> if (state == UiState.RUNNING || state == UiState.THINKING || state == UiState.PAUSING || state == UiState.PAUSED) transition(UiState.STOPPING, "停止中")
+            "resume_request" -> if (state == UiState.PAUSED || state == UiState.PAUSING) transition(UiState.IDLE, "已恢复·输入「继续」可恢复任务")
+        }
         if (kind == "text_input" && state != UiState.RUNNING && state != UiState.THINKING) {
             // 本地受理（300ms 反馈义务在输入侧；此处仅复位待命态）
             transition(UiState.IDLE, "已收到 · 正在理解")

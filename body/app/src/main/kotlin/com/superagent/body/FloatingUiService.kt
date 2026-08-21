@@ -68,6 +68,10 @@ class FloatingUiService : android.app.Service() {
             android.os.Handler(mainLooper).post {
                 render(snap)
                 updateNotification(snap)
+                // #26：面板由终态驱动（点球只发请求）——PAUSED/STOPPED 到达时自动展开，用户确认后再收
+                if (!panelOpen && (snap.state == UiStateController.UiState.PAUSED || snap.state == UiStateController.UiState.STOPPED)) {
+                    togglePanel()
+                }
             }
         }
         addBall()
@@ -147,9 +151,9 @@ class FloatingUiService : android.app.Service() {
                 showResultPanel()
             }
             else -> {
-                // I3：运行中点球 → 先发 pause_request（阻断下一动作），再展开控制面板
+                // I3+#26：运行中点球只发 pause_request——面板等 PAUSED 终态自动展开（subscribe 驱动），
+                // 不再点击即开（此前面板先于安全边界出现，用户以为已暂停而动作仍在途）
                 UiBus.events?.emit("voice", buildJsonObject { put("kind", "pause_request") })
-                togglePanel()
             }
         }
     }

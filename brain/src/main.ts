@@ -200,7 +200,9 @@ async function main(): Promise<void> {
         lastInjectedMemories = mem.hits.length
         console.log(`[brain] 记忆注入：${mem.hits.length} 条`)
       }
-    } catch { /* 记忆检索失败不阻塞任务 */ }
+    } catch (err) { /* 记忆检索失败不阻塞任务——但必须留痕（M4：静默吞错曾掩盖注入失效） */
+      console.warn(`[brain] 记忆检索失败（本任务无记忆注入）：${err instanceof Error ? err.message : String(err)}`)
+    }
     // 技能路由增强：任务输入时自动检索匹配技能并注入提示（模型不用自觉查 skill.list）
     try {
       const hits = await body.rpc<{ hits: Array<{ skill: { name: string; description: string } }> }>(
@@ -211,10 +213,13 @@ async function main(): Promise<void> {
           .slice(0, 3)
           .map((h) => `${h.skill.name}（${h.skill.description.slice(0, 30)}）`)
           .join("、")
-        enrichedInput = `【技能匹配】${skillHint}。请优先 skill.run 执行。\n${input}`
+        // M4 回填 bug：此前用 ${input} 拼接——技能块覆盖了记忆块（两注入互相丢）
+        enrichedInput = `【技能匹配】${skillHint}。请优先 skill.run 执行。\n${enrichedInput}`
         console.log(`[brain] 技能路由：${hits.hits.length} 个匹配`)
       }
-    } catch { /* skill.search 失败不阻塞任务 */ }
+    } catch (err) {
+      console.warn(`[brain] 技能检索失败（跳过技能路由）：${err instanceof Error ? err.message : String(err)}`)
+    }
 
     void reportPromptStart(input)
     // U2-#35：LLM 流停滞（GLM 4/4 实测卡 3-14min）——120s 超时 abort 防任务挂死
@@ -343,7 +348,7 @@ async function main(): Promise<void> {
           // #33（G1-08）：打断播报 = 用户要说话——语音模式立即开新一轮收听；文字模式仅记日志
           if (VOICE_MODE) {
             console.log("[brain] 用户打断了播报（barge-in），重新收听")
-            void enqueueTask(() => voiceTurn(body, promptAgent))
+            void enqueueTask(() => voiceTurn(body, promptAgent, reflectFailure))
           } else {
             console.log("[brain] 用户打断了播报（barge-in），等待下一轮输入")
           }
