@@ -1,8 +1,20 @@
 package com.superagent.body.core.vision
 
+import android.util.Base64
 import java.security.SecureRandom
-import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
+
+private const val TOKEN_BYTE_COUNT = 24
+private const val TOKEN_BASE64_FLAGS = Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP
+private val SECURE_RANDOM = SecureRandom()
+
+internal fun createVisionActionToken(
+    fillRandomBytes: (ByteArray) -> Unit = SECURE_RANDOM::nextBytes,
+    encodeToString: (ByteArray, Int) -> String = Base64::encodeToString,
+): String {
+    val bytes = ByteArray(TOKEN_BYTE_COUNT).also(fillRandomBytes)
+    return encodeToString(bytes, TOKEN_BASE64_FLAGS)
+}
 
 class VisionActionContextRegistry(
     private val nowMs: () -> Long = System::currentTimeMillis,
@@ -47,10 +59,6 @@ class VisionActionContextRegistry(
 
     private companion object {
         const val DEFAULT_TTL_MS = 120_000L
-        val SECURE_RANDOM = SecureRandom()
-        val DEFAULT_TOKEN_FACTORY: () -> String = {
-            val bytes = ByteArray(24).also(SECURE_RANDOM::nextBytes)
-            Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
-        }
+        val DEFAULT_TOKEN_FACTORY: () -> String = { createVisionActionToken() }
     }
 }

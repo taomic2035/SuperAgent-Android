@@ -3,6 +3,8 @@ package com.superagent.body.core.vision
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import kotlin.io.encoding.Base64
+import kotlin.io.encoding.ExperimentalEncodingApi
 
 class VisionActionContextRegistryTest {
     private var now = 1_000L
@@ -59,10 +61,27 @@ class VisionActionContextRegistryTest {
     }
 
     @Test
-    fun `default token is non-empty url-safe and unpadded`() {
-        val issued = VisionActionContextRegistry().issue("shot.jpg", "pkg", "sig", 1080, 2400)
+    @OptIn(ExperimentalEncodingApi::class)
+    fun `default token encodes exactly 24 random bytes as url-safe base64 without padding`() {
+        val originalBytes = ByteArray(24) { index -> index.toByte() }
+        var encodedBytes: ByteArray? = null
+        var encodedFlags: Int? = null
 
-        assertTrue(issued.isNotEmpty())
+        val issued = createVisionActionToken(
+            fillRandomBytes = { destination -> originalBytes.copyInto(destination) },
+            encodeToString = { bytes, flags ->
+                encodedBytes = bytes.copyOf()
+                encodedFlags = flags
+                Base64.UrlSafe.withPadding(Base64.PaddingOption.ABSENT).encode(bytes)
+            },
+        )
+
+        assertTrue(originalBytes.contentEquals(encodedBytes))
+        assertEquals(
+            android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING or android.util.Base64.NO_WRAP,
+            encodedFlags,
+        )
+        assertEquals(Base64.UrlSafe.withPadding(Base64.PaddingOption.ABSENT).encode(originalBytes), issued)
         assertTrue(issued.matches(Regex("[A-Za-z0-9_-]{32}")))
     }
 }
