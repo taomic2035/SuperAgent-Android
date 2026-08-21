@@ -12,7 +12,7 @@ import com.superagent.common.CommitBoundaryGuard
  *
  * 流程固定：闸门（ActionGate：提交边界 + 敏感会话 + 全节点检查）→ 执行 → 后置签名 → 事件。
  */
-class ActionExecutor(
+class ActionExecutor internal constructor(
     private val perceiver: ScreenPerceiver,
     private val controller: Controller,
     private val selector: OptionSelector,

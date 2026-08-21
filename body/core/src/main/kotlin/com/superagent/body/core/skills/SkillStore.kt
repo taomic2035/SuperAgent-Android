@@ -49,7 +49,7 @@ sealed class SkillRunOutcome {
     data class SensitiveHandoff(val completedSteps: Int) : SkillRunOutcome()
 }
 
-class SkillStore(
+class SkillStore internal constructor(
     private val dir: File,
     private val perceiver: ScreenPerceiver,
     private val selector: OptionSelector,

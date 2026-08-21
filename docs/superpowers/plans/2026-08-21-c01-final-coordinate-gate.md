@@ -4,7 +4,7 @@
 
 **Goal:** Ensure both `control.selectOption` and `control.selectSpec` validate the selected mark's final coordinates with `ActionGate` before any tap, including overlapping parent/child nodes.
 
-**Architecture:** Keep `ActionExecutor` as the public action authority while making `OptionSelector` a testable internal coordinate boundary. Production construction adapts `ScreenPerceiver`, `SensitiveSessionTracker`, and `Controller` into three narrow functions: perceive, gate, and tap. Both selector branches share one gate-before-tap path; label checks remain an early rejection only.
+**Architecture:** Keep `ActionExecutor` as the public action authority while making `OptionSelector` a module-internal, testable coordinate boundary. Its production construction requires `SensitiveSessionTracker` and adapts perception, typed gate, and tap into narrow functions. `OptionSelector` returns either `Completed(ActionResult)` or the original typed `GateBlocked(ActionGate.Violation)`; `ActionExecutor` maps the latter to its own `GateBlocked`, preserving commit semantics and sensitive-session nonce through BodyCore. Both selector branches share one gate-before-tap path; label checks remain an early rejection only. The `ActionExecutor` constructor is internal so its internal selector dependency is not exposed as public API.
 
 **Tech Stack:** Kotlin 2.x, Android library module, kotlinx.coroutines, JUnit 5, Gradle.
 
@@ -48,11 +48,11 @@ class OptionSelector private constructor(
     constructor(
         perceiver: ScreenPerceiver,
         controller: Controller,
-        sensitive: SensitiveSessionTracker? = null,
+        sensitive: SensitiveSessionTracker,
     ) : this(
         perceive = perceiver::perceive,
         coordinateGate = { x, y ->
-            sensitive?.let { ActionGate.violatingLabel(perceiver, it, x, y) }
+            ActionGate.violatingLabel(perceiver, sensitive, x, y)
         },
         tap = controller::tap,
     )
@@ -82,9 +82,9 @@ fun `selectOption final coordinate violation blocks before tap`() = runBlocking 
     )
 
     val result = selector.select("继续", verifySelected = false)
+    val blocked = assertInstanceOf(OptionSelector.SelectionResult.GateBlocked::class.java, result)
 
-    assertFalse(result.located)
-    assertEquals("GATE_BLOCKED:提交订单", result.note)
+    assertEquals("提交订单", blocked.violation.label)
     assertEquals(0, taps)
 }
 
@@ -98,7 +98,7 @@ fun `selectSpec final coordinate violation blocks before tap`() = runBlocking {
 
     val result = selector.select("继续", verifySelected = true)
 
-    assertFalse(result.located)
+    assertInstanceOf(OptionSelector.SelectionResult.GateBlocked::class.java, result)
     assertEquals(0, taps)
 }
 
@@ -108,13 +108,14 @@ fun `allowed final coordinate taps exactly once`() = runBlocking {
     val selector = selector(violation = null, onTap = { taps++ })
 
     val result = selector.select("继续", verifySelected = false)
+    val completed = assertInstanceOf(OptionSelector.SelectionResult.Completed::class.java, result)
 
-    assertTrue(result.located)
+    assertTrue(completed.actionResult.located)
     assertEquals(1, taps)
 }
 ```
 
-The helper must return `ScreenResult(signature="before", kind="a11y", blank=false, marks=listOf(Mark(1,"继续",Point(50,50))))`; the tap lambda returns `ActionResult(true)`.
+The helper must return `ScreenResult(signature="before", kind="a11y", blank=false, marks=listOf(Mark(1,"继续",Point(50,50))))`; the tap lambda returns `ActionResult(true)`. Record the coordinates passed to `coordinateGate` and assert `(50,50)`. Add a sensitive-session case using `ActionGate.Violation.SensitiveSession("发送", "nonce-1")` and assert the exact violation, including `nonce`, survives selector and ActionExecutor mapping.
 
 - [ ] **Step 3: Run the focused test and confirm the regression fails**
 
@@ -125,7 +126,7 @@ cd body
 .\gradlew.bat :core:testDebugUnitTest --tests "*OptionSelectorCoordinateGateTest*"
 ```
 
-Expected before the production fix: the `selectOption` test fails because the tap counter becomes 1.
+Expected before the production fix: the `selectOption` test fails behaviorally because the tap counter becomes 1 or because the result is `Completed` instead of typed `GateBlocked`; compilation errors do not satisfy RED.
 
 ### Task 3: Enforce gate-before-tap for every selector branch
 
@@ -134,23 +135,27 @@ Expected before the production fix: the `selectOption` test fails because the ta
 
 - [ ] **Step 1: Move the coordinate gate ahead of branch selection**
 
-Immediately after choosing `target`, add the single shared gate:
+Immediately after choosing `target`, add the single shared typed gate:
 
 ```kotlin
 coordinateGate(target.center.x, target.center.y)?.let { violation ->
-    return ActionResult(false, null, "GATE_BLOCKED:${violation.label}")
+    return SelectionResult.GateBlocked(violation)
 }
 ```
 
-Remove the existing `if (sensitive != null)` gate nested inside `verifySelected`. Replace both `controller.tap(...)` calls with `tap(...)`.
+Define `SelectionResult.Completed(ActionResult)` and `SelectionResult.GateBlocked(ActionGate.Violation)`. Return `Completed` for normal success/failure paths. Remove the existing nullable gate nested inside `verifySelected`, replace both `controller.tap(...)` calls with `tap(...)`, and make the production tracker mandatory.
 
-- [ ] **Step 2: Run the focused regression test**
+- [ ] **Step 2: Preserve the typed violation through ActionExecutor**
+
+In both Select branches, map `SelectionResult.GateBlocked` directly to `ActionExecutor.Result.GateBlocked` and unwrap `Completed.actionResult`. Never parse a `GATE_BLOCKED:` note string. This preserves `SensitiveSession.nonce` for `BodyCore.gateFailure`.
+
+- [ ] **Step 3: Run the focused regression test**
 
 Run the Task 2 focused command.
 
 Expected: all three tests pass; both blocked cases report zero taps and the allowed case reports one.
 
-- [ ] **Step 3: Run all control/security tests**
+- [ ] **Step 4: Run all control/security tests**
 
 Run:
 

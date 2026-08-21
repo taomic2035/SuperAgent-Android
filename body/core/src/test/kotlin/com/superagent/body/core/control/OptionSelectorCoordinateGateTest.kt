@@ -7,7 +7,7 @@ import com.superagent.common.Point
 import com.superagent.common.ScreenResult
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -16,9 +16,14 @@ class OptionSelectorCoordinateGateTest {
     @Test
     fun `verifySelected false blocks benign label when final coordinate gate detects commit`() = runBlocking {
         var tapCount = 0
+        var gatedAt: Pair<Int, Int>? = null
+        val violation = ActionGate.Violation.Commit("提交订单")
         val selector = OptionSelector(
             perceive = { screen("配送方式", 120, 240) },
-            coordinateGate = { _, _ -> ActionGate.Violation.Commit("提交订单") },
+            coordinateGate = { x, y ->
+                gatedAt = x to y
+                violation
+            },
             tap = { _, _ ->
                 tapCount++
                 ActionResult(true)
@@ -27,17 +32,22 @@ class OptionSelectorCoordinateGateTest {
 
         val result = selector.select("配送方式", verifySelected = false)
 
-        assertFalse(result.located)
-        assertEquals("GATE_BLOCKED:提交订单", result.note)
+        assertSame(violation, (result as SelectionResult.GateBlocked).violation)
+        assertEquals(120 to 240, gatedAt)
         assertEquals(0, tapCount)
     }
 
     @Test
     fun `verifySelected true blocks before tapping when final coordinate gate detects commit`() = runBlocking {
         var tapCount = 0
+        var gatedAt: Pair<Int, Int>? = null
+        val violation = ActionGate.Violation.Commit("提交订单")
         val selector = OptionSelector(
             perceive = { screen("配送方式", 120, 240) },
-            coordinateGate = { _, _ -> ActionGate.Violation.Commit("提交订单") },
+            coordinateGate = { x, y ->
+                gatedAt = x to y
+                violation
+            },
             tap = { _, _ ->
                 tapCount++
                 ActionResult(true)
@@ -46,8 +56,56 @@ class OptionSelectorCoordinateGateTest {
 
         val result = selector.select("配送方式", verifySelected = true)
 
-        assertFalse(result.located)
-        assertEquals("GATE_BLOCKED:提交订单", result.note)
+        assertSame(violation, (result as SelectionResult.GateBlocked).violation)
+        assertEquals(120 to 240, gatedAt)
+        assertEquals(0, tapCount)
+    }
+
+    @Test
+    fun `sensitive session violation preserves reason label and nonce`() = runBlocking {
+        var tapCount = 0
+        val violation = ActionGate.Violation.SensitiveSession("发送", "nonce-123")
+        val selector = OptionSelector(
+            perceive = { screen("普通选项", 120, 240) },
+            coordinateGate = { _, _ -> violation },
+            tap = { _, _ ->
+                tapCount++
+                ActionResult(true)
+            },
+        )
+
+        val result = selector.select("普通选项")
+
+        val blocked = result as SelectionResult.GateBlocked
+        assertSame(violation, blocked.violation)
+        assertEquals("sensitive_session", blocked.violation.reason)
+        assertEquals("发送", blocked.violation.label)
+        assertEquals("nonce-123", (blocked.violation as ActionGate.Violation.SensitiveSession).nonce)
+        assertEquals(0, tapCount)
+    }
+
+    @Test
+    fun `commit label returns typed gate violation before perception`() = runBlocking {
+        var perceiveCount = 0
+        var tapCount = 0
+        val selector = OptionSelector(
+            perceive = {
+                perceiveCount++
+                screen("提交订单", 120, 240)
+            },
+            coordinateGate = { _, _ -> null },
+            tap = { _, _ ->
+                tapCount++
+                ActionResult(true)
+            },
+        )
+
+        val result = selector.select("提交订单")
+
+        val violation = (result as SelectionResult.GateBlocked).violation
+        assertTrue(violation is ActionGate.Violation.Commit)
+        assertEquals("提交订单", violation.label)
+        assertEquals(0, perceiveCount)
         assertEquals(0, tapCount)
     }
 
@@ -67,7 +125,7 @@ class OptionSelectorCoordinateGateTest {
 
         val result = selector.select("配送方式", verifySelected = false)
 
-        assertTrue(result.located)
+        assertTrue((result as SelectionResult.Completed).actionResult.located)
         assertEquals(1, tapCount)
     }
 
