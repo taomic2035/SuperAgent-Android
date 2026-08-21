@@ -55,12 +55,17 @@ class AndroidSqliteMemoryDb(context: Context, name: String = "memory.db") :
                 "trace_json TEXT NOT NULL, started_at INTEGER NOT NULL, finished_at INTEGER NOT NULL, archived_at INTEGER NOT NULL," +
                 "memories_injected INTEGER NOT NULL DEFAULT 0)",
         )
+        AndroidSqliteCommandDb.createTable(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         // v1→v2（ME-7 埋点）：runs 加 memories_injected（旧行默认 0=未注入时代）
         if (oldVersion < 2) {
             db.execSQL("ALTER TABLE runs ADD COLUMN memories_injected INTEGER NOT NULL DEFAULT 0")
+        }
+        // v2→v3（S6-② command journal）：commands 表（冻结设计 docs/superpowers/specs/2026-08-21-command-ack-design.md）
+        if (oldVersion < 3) {
+            AndroidSqliteCommandDb.createTable(db)
         }
     }
 
@@ -160,7 +165,7 @@ class AndroidSqliteMemoryDb(context: Context, name: String = "memory.db") :
         }
 
     companion object {
-        const val DB_VERSION = 2
+        const val DB_VERSION = 3
     }
 }
 
