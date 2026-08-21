@@ -10,7 +10,7 @@ import { buildLlmVisionMarks } from "./guards/vision.ts"
 import { loadPersonas } from "./personas/personas.ts"
 import { buildSystemPrompt, buildChatOnlyPrompt } from "./personas/promptBuilder.ts"
 import { beginRun, hasResumableRun, resumeRun, finishRun, peekRun, buildResumeContext, getRun, setArchiveSink } from "./runState.ts"
-import { env } from "./env.ts"
+import { env, envInt } from "./env.ts"
 import { speak } from "./tts/index.ts"
 import { scheduleBackup, checkRestoreHint, maintainIfDue } from "./memory/backup.ts"
 import { compactContext } from "./contextWindow.ts"
@@ -25,7 +25,8 @@ const PERSONA_NAME = env("PERSONA", "assistant")
 const VOICE_MODE = env("VOICE_MODE", "0") === "1"
 
 /** U2-#35：LLM 流超时（实测 GLM 可停滞 3-14min，120s 保护性 abort） */
-const LLM_STREAM_TIMEOUT_MS = 120_000
+/** U2-#35 + #35：流超时 env 可配（qwen 实测单轮最长可 >120s；180s=3 倍观测中位余量） */
+const LLM_STREAM_TIMEOUT_MS = envInt("LLM_STREAM_TIMEOUT_MS", 180_000)
 
 let responseBuffer = ""
 
@@ -228,15 +229,23 @@ async function main(): Promise<void> {
     }
 
     void reportPromptStart(input)
-    // U2-#35：LLM 流停滞（GLM 4/4 实测卡 3-14min）——120s 超时 abort 防任务挂死
-    const timeoutId = setTimeout(() => {
-      try { agent.abort() } catch { /* 已完成 */ }
-      console.log("[brain] LLM 流超时（120s），已 abort")
-    }, LLM_STREAM_TIMEOUT_MS)
-    try {
-      await agent.prompt(enrichedInput)
-      clearTimeout(timeoutId)
-      llmFailures = 0
+    // U2-#35 + #35（点奶茶卡选择界面根因）：LLM 流偶发单轮停滞（qwen 实测 20-120s+ 波动）——
+    // 超时 abort 防挂死；超时后同上下文重试一轮（服务端偶发排队，重发多可通过）
+    const streamTimeout = (): { promise: Promise<void>; cancel: () => void } => {
+      let done = false
+      const timer = setTimeout(() => {
+        if (done) return
+        try { agent.abort() } catch { /* 已完成 */ }
+        console.log(`[brain] LLM 流超时（${LLM_STREAM_TIMEOUT_MS / 1000}s），已 abort`)
+      }, LLM_STREAM_TIMEOUT_MS)
+      const p = agent.prompt(enrichedInput).then(
+        () => { done = true },
+        (e: unknown) => { done = true; throw e },
+      )
+      return { promise: p, cancel: () => { done = true; clearTimeout(timer) } }
+    }
+
+    const settle = (): Promise<void> | undefined => {
       if (isStopRequested()) {
         reportFinish("aborted", "用户已停止")
         finishRun("failed", "用户停止")
@@ -255,8 +264,33 @@ async function main(): Promise<void> {
       } else {
         reportFinish("success", "已回复") // UI 不显示"失败"——对话型收笔是正常行为
       }
+      return
+    }
+
+    let attempt = streamTimeout()
+    try {
+      await attempt.promise
+      attempt.cancel()
+      llmFailures = 0
+      settle()
+      return
     } catch (err) {
-      clearTimeout(timeoutId)
+      attempt.cancel()
+      // #35：非用户停止的首轮失败 → 同上下文重试一轮（流停滞多为服务端偶发，重发可过）
+      if (!isStopRequested()) {
+        console.log("[brain] LLM 流中断，同上下文重试一轮（#35）")
+        attempt = streamTimeout()
+        try {
+          await attempt.promise
+          attempt.cancel()
+          llmFailures = 0
+          settle()
+          return
+        } catch (retryErr) {
+          attempt.cancel()
+          err = retryErr instanceof Error ? retryErr : err
+        }
+      }
       llmFailures++
       const msg = err instanceof Error ? err.message : String(err)
       if (llmFailures >= 3) {
