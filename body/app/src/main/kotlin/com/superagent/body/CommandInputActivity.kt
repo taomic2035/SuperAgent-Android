@@ -12,6 +12,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import com.superagent.body.core.ui.UiBus
+import com.superagent.body.core.ui.UiStateController
 
 /**
  * 半透明文字输入 Activity（docs/12 §4.C：独立输入表面——只有打字时获取键盘焦点，
@@ -50,12 +51,17 @@ class CommandInputActivity : android.app.Activity() {
                 val text = input.text.toString().trim()
                 if (text.isEmpty() || sent) return@setOnClickListener
                 sent = true
-                // C-07：由权威 UI 状态在事件发布前决定受理/拒绝；离线指令不进 EventBus。
-                val accepted = UiBus.stateController?.submitTextInput(text) == true
-                if (!accepted) {
-                    Toast.makeText(this@CommandInputActivity, "未发送·大脑离线", Toast.LENGTH_SHORT).show()
+                // 权威状态返回结构化原因：拒绝时保留 Activity 与草稿，允许用户处理后重试。
+                val result = UiBus.stateController?.submitTextInput(text)
+                when (result) {
+                    UiStateController.TextInputResult.ACCEPTED -> finish()
+                    UiStateController.TextInputResult.REJECTED_OFFLINE -> reject("未发送 · 大脑离线") { sent = false }
+                    UiStateController.TextInputResult.REJECTED_CONTROL_PENDING -> reject("未发送 · 请先完成暂停或停止") { sent = false }
+                    UiStateController.TextInputResult.REJECTED_PAUSED -> reject("未发送 · 请先继续或停止当前任务") { sent = false }
+                    UiStateController.TextInputResult.REJECTED_WAITING_USER -> reject("未发送 · 请先处理当前任务") { sent = false }
+                    UiStateController.TextInputResult.REJECTED_EMPTY -> sent = false
+                    null -> reject("未发送 · 服务尚未就绪") { sent = false }
                 }
-                finish()
             }
         }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         root.addView(title)
@@ -65,5 +71,10 @@ class CommandInputActivity : android.app.Activity() {
         input.requestFocus()
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
             .showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
+    }
+
+    private fun reject(message: String, reset: () -> Unit) {
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+        reset()
     }
 }

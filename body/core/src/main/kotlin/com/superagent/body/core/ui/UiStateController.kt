@@ -18,6 +18,7 @@ import kotlinx.serialization.json.put
 class UiStateController(private val events: EventBus) {
 
     enum class UiState { OFFLINE, MINI, IDLE, THINKING, RUNNING, PAUSING, PAUSED, STOPPING, STOPPED, AWAITING_CONFIRM, BLOCKED, COMPLETED, FAILED }
+    enum class TextInputResult { ACCEPTED, REJECTED_EMPTY, REJECTED_OFFLINE, REJECTED_CONTROL_PENDING, REJECTED_PAUSED, REJECTED_WAITING_USER }
 
     data class Snapshot(
         val state: UiState,
@@ -178,15 +179,25 @@ class UiStateController(private val events: EventBus) {
      * 避免 brain 重启后跳过历史事件时 UI 却声称“已收到”。
      */
     @Synchronized
-    fun submitTextInput(text: String): Boolean {
+    fun submitTextInput(text: String): TextInputResult {
         val normalized = text.trim()
-        if (normalized.isEmpty()) return false
+        if (normalized.isEmpty()) return TextInputResult.REJECTED_EMPTY
         if (state == UiState.OFFLINE) {
             transition(UiState.OFFLINE, "未发送·大脑离线")
-            return false
+            return TextInputResult.REJECTED_OFFLINE
+        }
+        // STOP > PAUSE > RESUME > NEW_TASK：未 settle 的控制请求以及可恢复断点
+        // 都不能被一条新文字指令隐式覆盖。调用方只得到本地拒绝，原状态/断点保持不变。
+        if (state == UiState.PAUSING || state == UiState.STOPPING) {
+            return TextInputResult.REJECTED_CONTROL_PENDING
+        }
+        if (state == UiState.PAUSED) return TextInputResult.REJECTED_PAUSED
+        // HITL/blocked 仍属于原命令的 WAITING_USER，不能被新输入隐藏或伪装成 IDLE。
+        if (state == UiState.AWAITING_CONFIRM || state == UiState.BLOCKED) {
+            return TextInputResult.REJECTED_WAITING_USER
         }
         events.emit("voice", buildJsonObject { put("kind", "text_input"); put("text", normalized) })
-        return true
+        return TextInputResult.ACCEPTED
     }
 
     /** C-06：仅 settled PAUSED 可发布一次；先显示恢复中，再交给 brain 原子 claim。 */

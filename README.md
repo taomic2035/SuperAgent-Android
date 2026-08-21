@@ -90,11 +90,14 @@ flowchart TB
 ```mermaid
 sequenceDiagram
     actor User as 用户
-    participant Brain as Termux 大脑
     participant Body as Android 躯体
+    participant Brain as Termux 大脑
     participant App as 目标应用
 
-    User->>Brain: 语音或文字指令
+    User->>Body: 语音或文字指令
+    Body-->>User: 本地排队 / 明确拒绝
+    Body->>Brain: 命令唤醒与领取
+    Brain-->>Body: prompt_start（Brain 接受）
     Brain->>Body: perceive.screen
     Body-->>Brain: 结构树 / 截图证据
     Brain->>Brain: 规划 + 守卫检查
@@ -109,6 +112,8 @@ sequenceDiagram
     Body-->>Brain: 结果证据
     Brain-->>User: 完成 / 失败 / 需介入
 ```
+
+> 命令回执现状：跨重启的持久 command journal/原子 claim 已完成设计、尚未实现；当前文字输入仍经易失 EventBus。图中的“排队/领取”表示目标闭环，不是已完成声明。状态倒退保护已实现：PAUSING、STOPPING、PAUSED 不会被新文字指令覆盖。
 
 ## 快速开始
 

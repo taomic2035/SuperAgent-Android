@@ -135,7 +135,7 @@ class UiStateControllerTest {
 
         val accepted = controller.submitTextInput("打开设置")
 
-        assertFalse(accepted)
+        assertEquals(UiStateController.TextInputResult.REJECTED_OFFLINE, accepted)
         assertEquals(0, voiceEvents)
         assertEquals(UiStateController.UiState.OFFLINE, controller.state)
     }
@@ -148,9 +148,86 @@ class UiStateControllerTest {
 
         val accepted = controller.submitTextInput("打开设置")
 
-        assertTrue(accepted)
+        assertEquals(UiStateController.TextInputResult.ACCEPTED, accepted)
         assertEquals(1, voiceEvents)
         assertEquals("已收到 · 正在理解", controller.snapshot().currentStep)
+    }
+
+    @Test
+    fun `submitTextInput cannot replace PAUSING with a new command`() {
+        emitBrain("task-1", 1, "prompt_start", "开始")
+        emitBrain("task-1", 2, "act", "执行中")
+        emitVoice("pause_request")
+        var voiceEvents = 0
+        events.addListener { type, _ -> if (type == "voice") voiceEvents++ }
+
+        val accepted = controller.submitTextInput("打开设置")
+
+        assertEquals(UiStateController.TextInputResult.REJECTED_CONTROL_PENDING, accepted)
+        assertEquals(0, voiceEvents)
+        assertEquals(UiStateController.UiState.PAUSING, controller.state)
+        assertEquals("暂停中·当前动作完成后停", controller.snapshot().currentStep)
+    }
+
+    @Test
+    fun `submitTextInput cannot replace STOPPING with a new command`() {
+        emitBrain("task-1", 1, "prompt_start", "开始")
+        emitBrain("task-1", 2, "act", "执行中")
+        emitVoice("stop_request")
+        var voiceEvents = 0
+        events.addListener { type, _ -> if (type == "voice") voiceEvents++ }
+
+        val accepted = controller.submitTextInput("打开设置")
+
+        assertEquals(UiStateController.TextInputResult.REJECTED_CONTROL_PENDING, accepted)
+        assertEquals(0, voiceEvents)
+        assertEquals(UiStateController.UiState.STOPPING, controller.state)
+        assertEquals("停止中", controller.snapshot().currentStep)
+    }
+
+    @Test
+    fun `submitTextInput cannot replace PAUSED checkpoint with a new command`() {
+        emitBrain("task-1", 1, "prompt_start", "开始")
+        emitBrain("task-1", 2, "finish", "已暂停", resultKind = "paused")
+        var voiceEvents = 0
+        events.addListener { type, _ -> if (type == "voice") voiceEvents++ }
+
+        val accepted = controller.submitTextInput("打开设置")
+
+        assertEquals(UiStateController.TextInputResult.REJECTED_PAUSED, accepted)
+        assertEquals(0, voiceEvents)
+        assertEquals(UiStateController.UiState.PAUSED, controller.state)
+        assertEquals("已暂停", controller.snapshot().currentStep)
+    }
+
+    @Test
+    fun `submitTextInput cannot hide AWAITING_CONFIRM`() {
+        emitBrain("task-1", 1, "prompt_start", "开始")
+        emitBrain("task-1", 2, "hitl_wait", "等待确认")
+        var voiceEvents = 0
+        events.addListener { type, _ -> if (type == "voice") voiceEvents++ }
+
+        val result = controller.submitTextInput("打开设置")
+
+        assertEquals(UiStateController.TextInputResult.REJECTED_WAITING_USER, result)
+        assertEquals(0, voiceEvents)
+        assertEquals(UiStateController.UiState.AWAITING_CONFIRM, controller.state)
+        assertEquals("等待确认", controller.snapshot().currentStep)
+    }
+
+    @Test
+    fun `submitTextInput cannot hide BLOCKED`() {
+        emitBrain("task-1", 1, "prompt_start", "开始")
+        emitBrain("task-1", 2, "blocked", "需要处理")
+        var voiceEvents = 0
+        events.addListener { type, _ -> if (type == "voice") voiceEvents++ }
+
+        val result = controller.submitTextInput("打开设置")
+
+        assertEquals(UiStateController.TextInputResult.REJECTED_WAITING_USER, result)
+        assertEquals(0, voiceEvents)
+        assertEquals(UiStateController.UiState.BLOCKED, controller.state)
+        assertEquals("需要处理", controller.snapshot().currentStep)
     }
 
     @Test
