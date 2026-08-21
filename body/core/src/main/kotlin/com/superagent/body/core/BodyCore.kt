@@ -90,6 +90,7 @@ class BodyCore(
     fun stop() {
         if (!started.compareAndSet(true, false)) return
         watchdog.stop()
+        server.shutdown() // C-10：取消全部在途执行（结构化 scope）
         server.stopAndWait()
     }
 

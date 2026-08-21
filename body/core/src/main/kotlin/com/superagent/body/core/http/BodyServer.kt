@@ -8,9 +8,12 @@ import com.superagent.common.RpcRequest
 import com.superagent.common.RpcResponse
 import com.superagent.common.json
 import fi.iki.elonen.NanoHTTPD
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.encodeToJsonElement
 import java.io.IOException
@@ -37,6 +40,14 @@ class BodyServer(
     private val idempotentOrder = java.util.concurrent.ConcurrentLinkedQueue<String>()
     /** 审计 P1-03：同 key 并发执行预留（共享首个执行结果，防重复手势/输入/启动） */
     private val idempotentInFlight = ConcurrentHashMap<String, java.util.concurrent.CompletableFuture<RpcResponse>>()
+
+    /** C-10（docs/16 §8）：结构化 scope 替代 GlobalScope——服务生命周期可整体取消 */
+    private val serverScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /** 服务销毁时取消全部在途执行（BodyService.onDestroy 调用）。 */
+    fun shutdown() {
+        serverScope.cancel()
+    }
 
     fun on(method: String, handler: Handler) {
         handlers[method] = handler
@@ -126,52 +137,68 @@ class BodyServer(
         }
         val handler = handlers[request.method]
             ?: return jsonResponse(RpcResponse.failure(request.id, "UNKNOWN_METHOD", "未知方法: ${request.method}"))
-        // 审计 P1-03：同 key 并发/瞬时重试共享同一次执行（in-flight 预留），不再各自进 handler 重复执行手势
+        // 审计 P1-03 + C-10：同 key 并发/瞬时重试共享同一次执行；执行体在 serverScope 结构化运行，
+        // HTTP 线程带超时等待——超时即回 TIMEOUT（reason=unknown_side_effect，引导先 perceive 核实），
+        // 但执行继续跑完：真实结果写入幂等缓存，同 key 重试拿到第一次执行的真实结果而非二次执行。
         if (key != null) {
             val newFuture = java.util.concurrent.CompletableFuture<RpcResponse>()
             val existing = idempotentInFlight.putIfAbsent(key, newFuture)
             if (existing != null) {
                 val shared = runCatching { existing.get(35, java.util.concurrent.TimeUnit.SECONDS) }.getOrNull()
-                    ?: RpcResponse.failure(request.id, "TIMEOUT", "同 key 请求仍在执行")
+                    ?: RpcResponse.failure(request.id, "TIMEOUT", "同 key 请求仍在执行（>35s）", "unknown_side_effect")
                 return jsonResponse(shared)
             }
-            var response: RpcResponse? = null
-            try {
-                response = runBlocking(handler, request)
-            } finally {
-                idempotentInFlight.remove(key)
-                newFuture.complete(
-                    response ?: RpcResponse.failure(request.id, "BODY_ERROR", "handler 未产出结果"),
-                )
-            }
-            if (key != null && response.ok && idempotentResults.putIfAbsent(key, response) == null) {
-                idempotentOrder.add(key)
-                while (idempotentOrder.size > MAX_IDEMPOTENT_ENTRIES) {
-                    val oldest = idempotentOrder.poll() ?: break
-                    idempotentResults.remove(oldest)
+            val timeoutMs = handlerTimeouts[request.method] ?: DEFAULT_HANDLER_TIMEOUT_MS
+            serverScope.launch {
+                var response: RpcResponse? = null
+                try {
+                    // 执行体给 handler 超时 + 5s 余量：慢动作最终完成并落缓存（幂等闭环）
+                    response = withTimeoutOrNull(timeoutMs + 5_000L) {
+                        runCatching { handler(request) }.getOrElse { e ->
+                            RpcResponse.failure(request.id, "BODY_ERROR", e.message ?: "handler error")
+                        }
+                    } ?: RpcResponse.failure(request.id, "TIMEOUT", "handler 执行超时（服务侧取消）", "unknown_side_effect")
+                } finally {
+                    idempotentInFlight.remove(key)
+                    newFuture.complete(
+                        response ?: RpcResponse.failure(request.id, "BODY_ERROR", "handler 未产出结果"),
+                    )
+                    // C-10：全结果缓存（含失败/超时晚到）——幂等键语义 = 同 key 只执行一次，结果唯一
+                    if (idempotentResults.putIfAbsent(key, response!!) == null) {
+                        idempotentOrder.add(key)
+                        while (idempotentOrder.size > MAX_IDEMPOTENT_ENTRIES) {
+                            val oldest = idempotentOrder.poll() ?: break
+                            idempotentResults.remove(oldest)
+                        }
+                    }
                 }
             }
-            return jsonResponse(response)
+            val awaited = runCatching { newFuture.get(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS) }.getOrNull()
+                ?: RpcResponse.failure(
+                    request.id, "TIMEOUT",
+                    "handler 超时——副作用可能已发生：同 key 重试会等待并返回第一次执行的真实结果；切勿换 key 盲重试，先 perceive.screen 核实现场",
+                    "unknown_side_effect",
+                )
+            return jsonResponse(awaited)
         }
-        val response = runBlocking(handler, request)
+        val response = dispatch(handler, request)
         return jsonResponse(response)
     }
 
-    private fun runBlocking(handler: Handler, request: RpcRequest): RpcResponse {
-        var result: RpcResponse? = null
-        val latch = java.util.concurrent.CountDownLatch(1)
-        GlobalScope.launch(Dispatchers.Default) {
-            try {
-                result = handler(request)
-            } catch (e: Exception) {
-                result = RpcResponse.failure(request.id, "BODY_ERROR", e.message ?: "handler error")
-            } finally {
-                latch.countDown()
-            }
-        }
+    /** C-10：无幂等键路径——结构化超时（withTimeoutOrNull 真取消，替代 latch 只停等待）。 */
+    private fun dispatch(handler: Handler, request: RpcRequest): RpcResponse {
         val timeoutMs = handlerTimeouts[request.method] ?: DEFAULT_HANDLER_TIMEOUT_MS
-        latch.await(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
-        return result ?: RpcResponse.failure(request.id, "TIMEOUT", "handler 超时")
+        return kotlinx.coroutines.runBlocking {
+            withTimeoutOrNull(timeoutMs) {
+                runCatching { handler(request) }.getOrElse { e ->
+                    RpcResponse.failure(request.id, "BODY_ERROR", e.message ?: "handler error")
+                }
+            } ?: RpcResponse.failure(
+                request.id, "TIMEOUT",
+                "handler 超时——副作用可能已发生，重试前先 perceive.screen 核实现场",
+                "unknown_side_effect",
+            )
+        }
     }
 
     /** 审计 P1-04：请求体上限（拒绝超大/负数/缺失 Content-Length，防持 token 客户端内存耗尽）。 */

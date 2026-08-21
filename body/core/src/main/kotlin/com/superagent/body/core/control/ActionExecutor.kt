@@ -38,6 +38,11 @@ class ActionExecutor(
     }
 
     suspend fun execute(action: Action): Result {
+        // C-10（docs/16 §8）：动作提交前检查 cancellation——超时取消后不再提交新副作用
+        val job = kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]
+        if (job != null && !job.isActive) {
+            throw kotlinx.coroutines.CancellationException("RPC 已超时取消，动作不再提交")
+        }
         // 1. 闸门：坐标类动作统一走 ActionGate（全包含节点检查）
         when (action) {
             is Action.Tap -> gate(action.x, action.y)?.let { return Result.GateBlocked(it) }
@@ -84,11 +89,15 @@ class ActionExecutor(
             is Action.TypeText -> controller.typeText(action.text)
             is Action.Select -> {
                 val near = if (action.nearX != null && action.nearY != null) PointArg(action.nearX, action.nearY) else null
-                selector.select(action.label, near, verifySelected = false)
+                val selection = selector.select(action.label, near, verifySelected = false)
+                selectionGateResult(selection)?.let { return it }
+                (selection as SelectionResult.Completed).actionResult
             }
             is Action.SelectSpec -> {
                 val near = if (action.nearX != null && action.nearY != null) PointArg(action.nearX, action.nearY) else null
-                selector.select(action.label, near, verifySelected = true)
+                val selection = selector.select(action.label, near, verifySelected = true)
+                selectionGateResult(selection)?.let { return it }
+                (selection as SelectionResult.Completed).actionResult
             }
             Action.Back -> controller.back()
             Action.Home -> {
@@ -119,6 +128,12 @@ class ActionExecutor(
         ActionGate.violatingLabel(perceiver, sensitive, x, y)
 
     companion object {
+        internal fun selectionGateResult(selection: SelectionResult): Result.GateBlocked? =
+            when (selection) {
+                is SelectionResult.Completed -> null
+                is SelectionResult.GateBlocked -> Result.GateBlocked(selection.violation)
+            }
+
         val REPLAYABLE = setOf(
             "control.tap", "control.longPress", "control.swipe", "control.typeText",
             "control.selectOption", "control.selectSpec", "control.back", "control.home", "control.launch",
