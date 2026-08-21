@@ -6,6 +6,16 @@
 
 ### 已完成
 
+**审计 C 系列清剿 + 自进化收口 + 主模型切换（2026-08-21，GLM/GPT 双线 18 提交）**
+
+- **主模型切换**：GLM-4.6v → qwen3.7-plus（阿里云 MaaS；PC 三连 chat/tool-call/vision 验证；M3"模型不执行工具"根因锁定 GLM 侧失效）
+- **视觉模型可配置化**：VISION_BASE_URL/API_KEY/MODEL 独立 provider（不随主链降级、互不隐式影响）+ 全库 11 文档去写死（正文抽象为配置能力，历史证据标"历史验证快照"）+ resolveModel 验收单测
+- **审计修复**：C-03/04（视觉入口 attach 闭环+className 结构化信号——旧 label 匹配实为失效）/C-05（终态单写者+幂等门+RESUMABLE 策略表）/C-08（注入覆盖 bug）/C-09（revise PII 三入口齐平）/C-10（结构化并发+幂等闭环+unknown_side_effect）/C-12（事件串行链防终态丢失）/C-14（快照原子写+checksum+0600）；C-01/02/11 由 GPT 批次修复
+- **交互闭环**：暂停 settle（paused 终态不再误报 success）+ PAUSING/STOPPING 生产者 + 面板终态驱动 + barge-in 重听
+- **ME 自进化收口**：ME-5 失败反思/ME-6 生命周期/ME-7 进化度量（evolve-report）/ME-8 备份恢复/ME-4a 记忆管理 UI——P1 全落地
+- **工程**：上下文窗口管理（compactContext）、#32 isReady 非阻塞、协作规约 v2（claims 认领制+交叉复核+自动推进）
+- **测试**：smoke 26/integration 6/契约镜像 34/body JVM 全套
+
 
 **DS-012/013 终修 + Plan C 兜底 + VAD/Barge-in + P1 启动（2026-08-20 下午 76 项）**
 
