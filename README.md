@@ -4,7 +4,7 @@
 
 **Android 深度定制超级 AI 助手**：双进程架构（Termux 大脑 + Android 躯体）+ 端侧语音 + 可编程 Agent + 技能自学习 + 三档位深度操控（免 root → Shizuku → AOSP）。
 
-[![status](https://img.shields.io/badge/status-v0.1.0%20post--release%20audit-orange)]()
+[![status](https://img.shields.io/badge/status-v0.1.1%20post--release%20audit-orange)]()
 [![license](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 [![tests](https://img.shields.io/badge/tests-brain55%20%7C%20body117-brightgreen)]()
 [![protocol](https://img.shields.io/badge/IPC-v2-orange)](docs/07-接口规格说明书.md)
@@ -13,7 +13,7 @@
 
 ## 当前状态（2026-08-21）
 
-`v0.1.0` 已打标签；当前 `main` 处于 post-release 审计与 P1 整改阶段。历史 P0 真机闭环有效；本轮已收口安全内层旁路、视觉失败真实性与暂停恢复竞态，真机视觉标定和其余 P1 项仍按下表管理：
+仓库最新标签为 `v0.1.1`；当前 `main` 位于其后的 post-release 审计与 P1 整改阶段。Android `versionName` 与 brain `package.json` 仍是运行时版本 `0.1.0`，不要与 Git 发布标签混用。历史 P0 真机闭环有效；本轮已收口安全内层旁路、视觉失败真实性与暂停恢复竞态，真机视觉标定和其余 P1 项仍按下表管理：
 
 | 里程碑 | 状态 | 说明 |
 |---|---|---|
@@ -24,7 +24,7 @@
 | G5 交互绿 | ✅ | 暂停→持久化→单次恢复、停止不可复活；离线输入在 EventBus 前明确拒绝 |
 | M4 语音绿 | ◐ | ASR 与在线播报有真机证据；本地 sherpa TTS 当前禁用，系统 TTS 兜底 |
 | M5 工程绿 | ◐ | 本轮 brain 55 个行为组、body 117 JVM 与 Debug APK 构建全绿；真机未复验 |
-| ME 记忆 | ◐ | SQLite、反思、归档、备份已实现；注入覆盖/重复归档/快照治理待修 |
+| ME 记忆 | ◐ | SQLite、反思、归档与原子快照代码已闭环；真实 DB 恢复演练、import 批内去重与管理体验待验 |
 
 审计详情见 [docs/16](docs/16-当前架构代码审计-2026-08-21.md)，整改后的当前方案见 [docs/17](docs/17-当前方案设计.md)。
 
@@ -149,7 +149,7 @@ adb forward tcp:8765 tcp:8765    # PC 直连真机
 BODY_URL=http://127.0.0.1:8765 BODY_TOKEN=$(adb shell run-as com.superagent.body cat files/token | tr -d '\r\n') npm run start
 ```
 
-`GLM_*` 是现有主模型兼容变量名，不代表业务代码绑定某个厂商；主模型同样通过 OpenAI 兼容地址与模型 ID 选择：
+`GLM_*` 是历史兼容变量名，不代表业务代码绑定某个厂商；主模型通过 OpenAI 兼容地址与模型 ID 选择：
 
 | 配置 | 作用 | 说明 |
 |---|---|---|
@@ -173,7 +173,7 @@ BODY_URL=http://127.0.0.1:8765 BODY_TOKEN=$(adb shell run-as com.superagent.body
 ```bash
 export VISION_BASE_URL=https://your-openai-compatible-endpoint/v1
 export VISION_API_KEY=your-vision-key
-export VISION_MODEL=qwen3.7-plus
+export VISION_MODEL=qwen3.7-plus  # 当前部署示例，可替换
 ```
 
 不得把凭据写入 README、`SESSION.md` 或源码；建议放入权限受限的本机环境文件。修改 `VISION_*` 不会改变主规划模型、Body 安全门禁或设备执行权。

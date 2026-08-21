@@ -21,6 +21,7 @@ jobs:
           cache-dependency-path: brain/package-lock.json
       - run: npm ci
       - run: npm run typecheck
+      - run: npm run docs-consistency
       - run: npm run contract
       - run: npm run smoke
       - run: npm run integration
