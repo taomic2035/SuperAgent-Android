@@ -142,6 +142,20 @@ async function main(): Promise<void> {
       assert.ok(!resolved.localOnly)
       assert.ok(resolved.backupModel && resolved.backupLabel?.includes("无视觉"), "备用云端已注册且明示降级")
       assert.ok(resolved.localModel, "本地兜底已注册")
+      assert.ok(!resolved.visionModel, "未配置 VISION_* 时无独立视觉模型（跟随主模型）")
+      // 视觉可配置（GPT 验收边界）：VISION_* 齐备注册独立 provider——换视觉模型零代码修改
+      process.env.VISION_BASE_URL = "https://vision.example/v1"
+      process.env.VISION_API_KEY = "vision-key"
+      process.env.VISION_MODEL = "second-vision-model"
+      const withVision = resolveModel()
+      assert.ok(withVision.visionModel, "VISION_* 齐备注册独立视觉模型")
+      assert.ok(withVision.visionLabel === "vision/second-vision-model（独立视觉）", "视觉 label 独立可辨")
+      assert.ok(withVision.model !== withVision.visionModel, "主规划模型与视觉模型互不隐式影响")
+      delete process.env.VISION_API_KEY
+      const visionNoKey = resolveModel()
+      assert.ok(visionNoKey.visionModel, "VISION_API_KEY 缺省仍可注册（内网免鉴权端点场景）")
+      delete process.env.VISION_BASE_URL
+      delete process.env.VISION_MODEL
       delete process.env.GLM_API_KEY
       const localOnly = resolveModel()
       assert.ok(localOnly.localOnly && localOnly.label.startsWith("local/"), "无云端 key 时进 M3 纯本地模式")
