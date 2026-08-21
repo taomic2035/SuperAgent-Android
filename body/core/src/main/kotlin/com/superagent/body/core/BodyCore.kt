@@ -18,6 +18,8 @@ import com.superagent.body.core.skills.SkillStore
 import com.superagent.body.core.speech.SpeechEngine
 import com.superagent.body.core.speech.SpeechUnavailable
 import com.superagent.body.core.speech.VoiceConfig
+import com.superagent.body.core.vision.VisionActionContextRegistry
+import com.superagent.body.core.vision.bindVisionActionContext
 import com.superagent.common.ActionResult
 import com.superagent.common.CommitBoundaryGuard
 import com.superagent.common.JsonElement
@@ -70,6 +72,7 @@ class BodyCore(
     private val screenshots = com.superagent.body.core.screenshot.ScreenshotService(context).also {
         com.superagent.body.core.screenshot.ScreenshotService.shared = it
     }
+    private val visionActionContexts = VisionActionContextRegistry()
     /** AD-11：唯一动作执行入口——RPC 与回放共用，安全闸门不分散 */
     val actionExecutor = com.superagent.body.core.control.ActionExecutor(perceiver, controller, selector, sensitiveSession)
     private val server = BodyServer(events, blobsDir)
@@ -158,18 +161,25 @@ class BodyCore(
                             return@rpc RpcResponse.failure(req.id, "VISION_BLOCKED", "敏感会话或前台应用未知，禁止视觉导出", "privacy")
                         is VisionCaptureResult.Completed -> {
                             val capture = captured.capture ?: return@rpc ok(req, captured.screen)
+                            val visionScreen = captured.screen.copy(
+                                kind = "vision",
+                                marks = null,
+                                nodes = null,
+                                pageTexts = null,
+                                screenshotRef = capture.ref,
+                                screenWidth = capture.screenWidth,
+                                screenHeight = capture.screenHeight,
+                                screenshotWidth = capture.screenshotWidth,
+                                screenshotHeight = capture.screenshotHeight,
+                            )
                             return@rpc ok(
                                 req,
-                                captured.screen.copy(
-                                    kind = "vision",
-                                    marks = null,
-                                    nodes = null,
-                                    pageTexts = null,
+                                bindVisionActionContext(
+                                    screen = visionScreen,
                                     screenshotRef = capture.ref,
                                     screenWidth = capture.screenWidth,
                                     screenHeight = capture.screenHeight,
-                                    screenshotWidth = capture.screenshotWidth,
-                                    screenshotHeight = capture.screenshotHeight,
+                                    registry = visionActionContexts,
                                 ),
                             )
                         }
