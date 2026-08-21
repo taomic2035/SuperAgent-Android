@@ -20,6 +20,7 @@
     "resume-coordinator": "tsx --test test/resume-coordinator.ts",
     "vision-fallback": "tsx test/vision-fallback.ts",
     "tts-chain": "tsx test/tts-online-chain.ts",
+    "command-pump": "tsx test/command-pump.ts",
     "memory-backup": "tsx src/memory/backup-cli.ts backup",
     "memory-restore": "tsx src/memory/backup-cli.ts restore",
     "evolve-report": "tsx src/memory/evolve-report.ts"
