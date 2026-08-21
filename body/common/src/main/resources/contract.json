@@ -246,7 +246,8 @@
         "trace",
         "startedAt",
         "finishedAt",
-        "archivedAt"
+        "archivedAt",
+        "memoriesInjected"
       ]
     },
     "RunArchiveResult": {
@@ -263,6 +264,12 @@
       "fields": [
         "inserted",
         "skipped"
+      ]
+    },
+    "MemoryMaintainResult": {
+      "fields": [
+        "decayed",
+        "archived"
       ]
     }
   }

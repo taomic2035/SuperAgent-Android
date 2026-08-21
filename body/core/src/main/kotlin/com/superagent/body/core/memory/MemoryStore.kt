@@ -6,6 +6,7 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import com.superagent.common.MemoryEntry
 import com.superagent.common.MemoryImportResult
+import com.superagent.common.MemoryMaintainResult
 import com.superagent.common.MemorySearchHit
 import com.superagent.common.MemorySearchResult
 import com.superagent.common.MemoryWriteResult
@@ -51,12 +52,16 @@ class AndroidSqliteMemoryDb(context: Context, name: String = "memory.db") :
             "CREATE TABLE IF NOT EXISTS runs (" +
                 "id INTEGER PRIMARY KEY AUTOINCREMENT," +
                 "goal TEXT NOT NULL, outcome TEXT NOT NULL, failure_reason TEXT," +
-                "trace_json TEXT NOT NULL, started_at INTEGER NOT NULL, finished_at INTEGER NOT NULL, archived_at INTEGER NOT NULL)",
+                "trace_json TEXT NOT NULL, started_at INTEGER NOT NULL, finished_at INTEGER NOT NULL, archived_at INTEGER NOT NULL," +
+                "memories_injected INTEGER NOT NULL DEFAULT 0)",
         )
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // v1：无迁移路径
+        // v1→v2（ME-7 埋点）：runs 加 memories_injected（旧行默认 0=未注入时代）
+        if (oldVersion < 2) {
+            db.execSQL("ALTER TABLE runs ADD COLUMN memories_injected INTEGER NOT NULL DEFAULT 0")
+        }
     }
 
     override fun insert(entry: MemoryEntry): Long =
@@ -123,6 +128,7 @@ class AndroidSqliteMemoryDb(context: Context, name: String = "memory.db") :
                 put("started_at", record.startedAt)
                 put("finished_at", record.finishedAt)
                 put("archived_at", record.archivedAt)
+                put("memories_injected", record.memoriesInjected)
             },
         )
 
@@ -146,6 +152,7 @@ class AndroidSqliteMemoryDb(context: Context, name: String = "memory.db") :
                         startedAt = c.getLong(c.getColumnIndexOrThrow("started_at")),
                         finishedAt = c.getLong(c.getColumnIndexOrThrow("finished_at")),
                         archivedAt = c.getLong(c.getColumnIndexOrThrow("archived_at")),
+                        memoriesInjected = c.getColumnIndex("memories_injected").takeIf { it >= 0 }?.let { c.getInt(it) } ?: 0,
                     ),
                 )
             }
@@ -153,7 +160,7 @@ class AndroidSqliteMemoryDb(context: Context, name: String = "memory.db") :
         }
 
     companion object {
-        const val DB_VERSION = 1
+        const val DB_VERSION = 2
     }
 }
 
@@ -252,6 +259,34 @@ class MemoryStore(private val db: MemoryDb) {
     fun exportAll(): List<MemoryEntry> = db.all()
 
     /**
+     * ME-6 生命周期维护（docs/15 §8.2），月度由 brain 触发：
+     * - 衰减：active 条目 90 天未更新（updatedAt 距今）→ confidence ×0.9（不低于 0.1 出局线）；
+     *   衰减不动 updatedAt（保留"未命中"事实，否则每次维护都看到刚更新过）
+     * - 容量治理：active > 500 → hits=0 且 confidence 最低的批次转 revoked 软删归档（Iron Law 不物理删）
+     */
+    fun maintain(now: Long = System.currentTimeMillis()): MemoryMaintainResult {
+        val staleThreshold = 90L * 24 * 60 * 60 * 1000
+        var decayed = 0
+        for (m in db.active()) {
+            if (now - m.updatedAt > staleThreshold && m.confidence > 0.1) {
+                db.update(m.copy(confidence = (m.confidence * 0.9).coerceAtLeast(0.1)))
+                decayed++
+            }
+        }
+        val stillActive = db.active()
+        var archived = 0
+        if (stillActive.size > MAX_ACTIVE) {
+            val excess = stillActive.size - MAX_ACTIVE
+            val toArchive = stillActive.filter { it.hits == 0 }.sortedBy { it.confidence }.take(excess)
+            for (m in toArchive) {
+                db.update(m.copy(revoked = true, updatedAt = now))
+                archived++
+            }
+        }
+        return MemoryMaintainResult(decayed, archived)
+    }
+
+    /**
      * ME-8 恢复（补缺语义，docs/15 §7 ME-8 行）：
      * - 只插入 body 当前缺失的 topic+kind active 组合（不覆盖现有——body 为准）
      * - revoked 历史不回写（快照文件本身留档即可，Iron Law 不要求重建历史）
@@ -298,6 +333,8 @@ class MemoryStore(private val db: MemoryDb) {
         const val MAX_TOPIC = 32
         const val MAX_CONTENT = 200
         const val MAX_SOURCE = 80
+        /** ME-6 容量上限（docs/15 §8.2）：active 超此数软删最低分零命中批次 */
+        const val MAX_ACTIVE = 500
 
         // G2-01 纵深防御（BR-04.4 首块）：写入侧不信任调用方——brain 侧 reflect/lessons/remember
         // 已有 redact 前置，此处兜底拦截 PII 直接入库（身份证 18 位 / 银行卡 15-19 位数字串）

@@ -49,6 +49,7 @@ class ContractMirrorTest {
         "MemorySearchHit" to serializer<MemorySearchHit>(),
         "MemorySearchResult" to serializer<MemorySearchResult>(),
         "MemoryImportResult" to serializer<MemoryImportResult>(),
+        "MemoryMaintainResult" to serializer<MemoryMaintainResult>(),
         "RunRecord" to serializer<RunRecord>(),
         "RunArchiveResult" to serializer<RunArchiveResult>(),
         "RunListResult" to serializer<RunListResult>(),

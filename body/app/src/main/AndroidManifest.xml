@@ -55,6 +55,11 @@
             android:theme="@android:style/Theme.Translucent.NoTitleBar"
             android:windowSoftInputMode="stateVisible|adjustResize" />
 
+        <activity
+            android:name=".MemoryActivity"
+            android:exported="false"
+            android:label="我的记忆" />
+
         <service
             android:name=".BodyAccessibilityService"
             android:exported="true"

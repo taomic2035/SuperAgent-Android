@@ -26,6 +26,7 @@ class RunArchiveStore(private val db: RunArchiveDb) {
         trace: List<TraceStep>,
         startedAt: Long,
         finishedAt: Long,
+        memoriesInjected: Int = 0,
     ): RunArchiveResult {
         val g = goal.trim()
         require(g.isNotEmpty()) { "goal 不能为空" }
@@ -40,6 +41,7 @@ class RunArchiveStore(private val db: RunArchiveDb) {
             startedAt = startedAt,
             finishedAt = finishedAt,
             archivedAt = now,
+            memoriesInjected = memoriesInjected.coerceIn(0, 99),
         )
         return RunArchiveResult(db.insert(record))
     }

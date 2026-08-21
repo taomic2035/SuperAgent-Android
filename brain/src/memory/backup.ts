@@ -3,7 +3,7 @@ import { join } from "node:path"
 import { createInterface } from "node:readline/promises"
 import { stdin, stdout } from "node:process"
 import type { BodyClient } from "../ipc/client.ts"
-import type { MemoryEntry, MemoryImportResult } from "../ipc/types.ts"
+import type { MemoryEntry, MemoryImportResult, MemoryMaintainResult } from "../ipc/types.ts"
 
 /**
  * ME-8 记忆备份导出/恢复（docs/15 §7——"不丢记忆"承诺的兑现项）：
@@ -67,6 +67,26 @@ export async function checkRestoreHint(body: BodyClient): Promise<void> {
     }
   } catch {
     /* 提示失败无害 */
+  }
+}
+
+/**
+ * ME-6 生命周期维护（docs/15 §8.2）：月度触发（30 天间隔，水位文件防重）。
+ * 衰减 + 容量治理在 body 内完成，brain 只管节奏。
+ */
+const MAINTAIN_INTERVAL_MS = 30 * 24 * 60 * 60 * 1000
+
+export async function maintainIfDue(body: BodyClient, dir = process.env.SUPER_AGENT_STATE_DIR ?? join(process.env.HOME ?? process.cwd(), ".super-agent")): Promise<void> {
+  try {
+    const marker = join(dir, "memory-maintain-watermark.json")
+    const last = existsSync(marker) ? (JSON.parse(readFileSync(marker, "utf8")) as { ts: number }).ts : 0
+    if (Date.now() - last < MAINTAIN_INTERVAL_MS) return
+    const r = await body.rpc<MemoryMaintainResult>("memory.maintain", {})
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(marker, JSON.stringify({ ts: Date.now() }), "utf8")
+    console.log(`[brain] ME-6 记忆维护完成：衰减 ${r.decayed} 条，归档 ${r.archived} 条`)
+  } catch (err) {
+    console.warn(`[brain] ME-6 记忆维护失败（下次启动重试）：${err instanceof Error ? err.message : String(err)}`)
   }
 }
 

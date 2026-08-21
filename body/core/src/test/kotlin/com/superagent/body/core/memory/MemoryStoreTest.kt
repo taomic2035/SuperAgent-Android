@@ -80,6 +80,19 @@ class MemoryStoreTest {
     }
 
     @Test
+    fun `ME-6 maintain 衰减旧条目且不动 updatedAt`() {
+        store.write("preference", "奶茶口味", "少糖", "user-told")
+        val stale = db.active().first()
+        db.update(stale.copy(updatedAt = System.currentTimeMillis() - 91L * 24 * 3600 * 1000, confidence = 0.8))
+        val r = store.maintain()
+        val after = db.active().first()
+        assertEquals(1, r.decayed)
+        assertEquals(0, r.archived)
+        assertTrue(after.confidence in 0.71..0.73, "0.8×0.9=0.72，实际 ${after.confidence}")
+        assertTrue(after.updatedAt < System.currentTimeMillis() - 90L * 24 * 3600 * 1000, "衰减不得重置 updatedAt")
+    }
+
+    @Test
     fun `ME-8 exportAll 含 revoked 条目`() {
         store.write("preference", "奶茶口味", "少糖", "user-told")
         store.write("preference", "奶茶口味", "无糖", "user-told") // 顶替 → 旧条 revoked

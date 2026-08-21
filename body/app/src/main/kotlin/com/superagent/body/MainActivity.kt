@@ -54,6 +54,10 @@ class MainActivity : AppCompatActivity() {
                 refreshStatus()
             }
         }
+        // ME-4a：隐私红线兑现——用户可查可删自己的长期记忆
+        findViewById<Button>(R.id.btn_memory).setOnClickListener {
+            startActivity(Intent(this, MemoryActivity::class.java))
+        }
     }
 
     override fun onResume() {

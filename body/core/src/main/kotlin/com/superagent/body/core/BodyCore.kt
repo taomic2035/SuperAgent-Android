@@ -450,6 +450,11 @@ class BodyCore(
                 )
         }
 
+        // ME-6 生命周期维护（docs/15 §8.2）：衰减 + 容量治理——brain 月度触发
+        server.rpc("memory.maintain") { req ->
+            ok(req, memories.maintain())
+        }
+
         // ME-3b 情景层全量归档（docs/15 §3）：run 快照 SQLite 全量留存（不环形淘汰）
         server.rpc("run.archive") { req ->
             val p = params(req)
@@ -463,6 +468,7 @@ class BodyCore(
                 runArchive.archive(
                     goal, outcome, p.string("failureReason"), trace,
                     p.long("startedAt") ?: now, p.long("finishedAt") ?: now,
+                    p.int("memoriesInjected") ?: 0,
                 )
             }.fold(
                 { ok(req, it) },

@@ -270,6 +270,13 @@ data class MemoryImportResult(
     val skipped: Int,
 )
 
+/** ME-6 生命周期维护结果（docs/15 §8.2）：衰减 + 容量治理统计 */
+@Serializable
+data class MemoryMaintainResult(
+    val decayed: Int,
+    val archived: Int,
+)
+
 /** ME-3b 情景层全量归档（docs/15 §3）：run 历史 SQLite 化（Iron Law——环形 30 条会丢，全量不丢） */
 @Serializable
 data class RunRecord(
@@ -282,6 +289,8 @@ data class RunRecord(
     val startedAt: Long,
     val finishedAt: Long,
     val archivedAt: Long,
+    /** ME-7 埋点：本 run 注入的记忆条数（进化度量 A/B 数据基础；旧记录无此字段=0） */
+    val memoriesInjected: Int = 0,
 )
 
 @Serializable

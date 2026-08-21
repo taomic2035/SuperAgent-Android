@@ -192,6 +192,12 @@ export interface MemoryImportResult {
   skipped: number
 }
 
+/** ME-6 生命周期维护结果（docs/15 §8.2）：衰减 + 容量治理统计 */
+export interface MemoryMaintainResult {
+  decayed: number
+  archived: number
+}
+
 /** ME-3b 情景层全量归档（docs/15 §3）：run 历史 SQLite 化（环形 30 条会丢，全量不丢） */
 export interface RunRecord {
   id: number
@@ -203,6 +209,8 @@ export interface RunRecord {
   startedAt: number
   finishedAt: number
   archivedAt: number
+  /** ME-7 埋点：本 run 注入的记忆条数（进化度量 A/B 数据基础；旧记录无此字段=0） */
+  memoriesInjected?: number
 }
 
 export interface RunArchiveResult {

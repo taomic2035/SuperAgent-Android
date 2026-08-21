@@ -18,7 +18,8 @@
     "integration": "tsx test/integration.ts",
     "tts-chain": "tsx test/tts-online-chain.ts",
     "memory-backup": "tsx src/memory/backup-cli.ts backup",
-    "memory-restore": "tsx src/memory/backup-cli.ts restore"
+    "memory-restore": "tsx src/memory/backup-cli.ts restore",
+    "evolve-report": "tsx src/memory/evolve-report.ts"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "latest",

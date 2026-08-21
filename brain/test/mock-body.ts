@@ -38,6 +38,7 @@ export function startMockBody(options: MockBodyOptions): Promise<{ port: number;
     startedAt: number
     finishedAt: number
     archivedAt: number
+    memoriesInjected?: number
   }
   let nextRunId = 1
   const runRecords: MockRunRecord[] = []
@@ -259,8 +260,10 @@ export function startMockBody(options: MockBodyOptions): Promise<{ port: number;
         }
         return void sendJson(res, 200, reply({ inserted, skipped }))
       }
+      case "memory.maintain":
+        return void sendJson(res, 200, reply({ decayed: 0, archived: 0 }))
       case "run.archive": {
-        const p = (params as { goal?: string; outcome?: string; failureReason?: string; startedAt?: number; finishedAt?: number }) ?? {}
+        const p = (params as { goal?: string; outcome?: string; failureReason?: string; startedAt?: number; finishedAt?: number; memoriesInjected?: number }) ?? {}
         if (!p.goal || !p.outcome) return void sendJson(res, 200, fail("BAD_PARAMS", "缺少 goal/outcome"))
         if (!["success", "failed", "crashed", "needs_human", "closed"].includes(p.outcome)) {
           return void sendJson(res, 200, fail("BAD_PARAMS", `outcome 非法: ${p.outcome}`))
@@ -275,6 +278,7 @@ export function startMockBody(options: MockBodyOptions): Promise<{ port: number;
           startedAt: p.startedAt ?? Date.now(),
           finishedAt: p.finishedAt ?? Date.now(),
           archivedAt: Date.now(),
+          memoriesInjected: Math.min(99, Math.max(0, p.memoriesInjected ?? 0)),
         })
         return void sendJson(res, 200, reply({ id }))
       }

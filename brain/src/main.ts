@@ -12,7 +12,7 @@ import { buildSystemPrompt, buildChatOnlyPrompt } from "./personas/promptBuilder
 import { beginRun, hasResumableRun, resumeRun, finishRun, peekRun, buildResumeContext, getRun, setArchiveSink } from "./runState.ts"
 import { env } from "./env.ts"
 import { speak } from "./tts/index.ts"
-import { scheduleBackup, checkRestoreHint } from "./memory/backup.ts"
+import { scheduleBackup, checkRestoreHint, maintainIfDue } from "./memory/backup.ts"
 import { initBrainEvents, reportPromptStart, reportFinish, isStopRequested, clearStop, requestStop, requestPause, resumeFromPause } from "./ipc/brainEventReporter.ts"
 import { buildReflector, buildFailureReflector } from "./memory/reflect.ts"
 import type { FailureReflector, Reflector } from "./memory/reflect.ts"
@@ -31,6 +31,9 @@ let responseBuffer = ""
 /** 语音循环自动播报用的当前 persona 音色（main() 启动时设置，voiceTurn 消费） */
 let speakVoice: { bodyVoice: unknown; edgeVoice?: string } | undefined
 
+/** ME-7 埋点：最近一轮 prompt 注入的记忆条数（archiveSink 消费后由下一轮覆盖） */
+let lastInjectedMemories = 0
+
 async function main(): Promise<void> {
   const body = new BodyClient(BODY_URL, BODY_TOKEN)
   initBrainEvents(body)
@@ -41,8 +44,11 @@ async function main(): Promise<void> {
   // ME-8 记忆备份（docs/15 §7）：6h 定时快照落 Termux + body 空库时提示恢复（不自动——尊重清空意愿）
   scheduleBackup(body)
   void checkRestoreHint(body).catch(() => undefined)
+  // ME-6 生命周期维护（docs/15 §8.2）：月度衰减/容量治理（水位防重，fire-and-forget）
+  void maintainIfDue(body).catch(() => undefined)
 
   // ME-3b 情景层全量归档（docs/15 §3）：终态 run 推 body SQLite（fire-and-forget，脱敏 snapshot）
+  // memoriesInjected（ME-7 埋点）：本 run 注入的记忆条数——进化度量 A/B 的数据基础
   setArchiveSink((snap) => {
     void body.rpc("run.archive", {
       goal: snap.goal,
@@ -51,6 +57,7 @@ async function main(): Promise<void> {
       startedAt: snap.startedAt,
       finishedAt: snap.finishedAt,
       trace: snap.trace,
+      memoriesInjected: lastInjectedMemories,
     }).catch(() => undefined)
   })
 
@@ -184,11 +191,13 @@ async function main(): Promise<void> {
     clearStop()
     // ME-2 记忆注入（docs/15 §5）：每轮任务前检索 top-5 以【主人记忆】块前缀注入（fail-open）
     let enrichedInput = input
+    lastInjectedMemories = 0
     try {
       const mem = await body.rpc<MemorySearchResult>("memory.search", { query: input, limit: 5 }, undefined, 5_000)
       if (mem.hits.length > 0) {
         const lines = mem.hits.map((h) => `- ${h.memory.topic}：${h.memory.content}（${h.memory.kind}）`).join("\n")
         enrichedInput = `【主人记忆】以下是关于用户的长期记忆，执行任务时遵守：\n${lines}\n${enrichedInput}`
+        lastInjectedMemories = mem.hits.length
         console.log(`[brain] 记忆注入：${mem.hits.length} 条`)
       }
     } catch { /* 记忆检索失败不阻塞任务 */ }
