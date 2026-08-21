@@ -150,11 +150,18 @@ async function main(): Promise<void> {
     transformContext: compactContext,
   })
 
+  /**
+   * #35 滑动停滞检测：模型事件（delta/工具结果）触发重置——「STALL_MS 无任何事件」才 abort。
+   * 旧实现把超时包在 agent.prompt 外层=整任务总限时，多步任务（3-5min 正常）被误杀。
+   */
+  let stallReset: (() => void) | null = null
+
   const subscribe = (a: Agent): void => {
     a.subscribe((event) => {
       if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
         process.stdout.write(event.assistantMessageEvent.delta)
         responseBuffer += event.assistantMessageEvent.delta
+        stallReset?.() // 任意模型事件滑动续命（工具执行间隙由 body 90s 上限覆盖 <180s）
       }
     })
   }
@@ -204,7 +211,8 @@ async function main(): Promise<void> {
       const mem = await body.rpc<MemorySearchResult>("memory.search", { query: input, limit: 5 }, undefined, 5_000)
       if (mem.hits.length > 0) {
         const lines = mem.hits.map((h) => `- ${h.memory.topic}：${h.memory.content}（${h.memory.kind}）`).join("\n")
-        enrichedInput = `【主人记忆】以下是关于用户的长期记忆，执行任务时遵守：\n${lines}\n${enrichedInput}`
+        // #35 次生发现：偏好与当前指令冲突时模型反复澄清卡住——明示当前指令优先，无需再确认
+        enrichedInput = `【主人记忆】以下是关于用户的长期记忆（仅供参考；若与本次指令冲突，以本次指令为准，直接执行不要反复确认）：\n${lines}\n${enrichedInput}`
         lastInjectedMemories = mem.hits.length
         console.log(`[brain] 记忆注入：${mem.hits.length} 条`)
       }
@@ -232,18 +240,35 @@ async function main(): Promise<void> {
     await reportPromptStart(input)
     // U2-#35 + #35（点奶茶卡选择界面根因）：LLM 流偶发单轮停滞（qwen 实测 20-120s+ 波动）——
     // 超时 abort 防挂死；超时后同上下文重试一轮（服务端偶发排队，重发多可通过）
+    // #35：滑动停滞计时（事件驱动续命；无事件满 LLM_STREAM_TIMEOUT_MS 才 abort）
     const streamTimeout = (): { promise: Promise<void>; cancel: () => void } => {
       let done = false
-      const timer = setTimeout(() => {
+      let timer = setTimeout(() => {
         if (done) return
         try { agent.abort() } catch { /* 已完成 */ }
-        console.log(`[brain] LLM 流超时（${LLM_STREAM_TIMEOUT_MS / 1000}s），已 abort`)
+        console.log(`[brain] LLM 流停滞 ${LLM_STREAM_TIMEOUT_MS / 1000}s（无模型事件），已 abort`)
       }, LLM_STREAM_TIMEOUT_MS)
+      stallReset = () => {
+        if (done) return
+        clearTimeout(timer)
+        timer = setTimeout(() => {
+          if (done) return
+          try { agent.abort() } catch { /* 已完成 */ }
+          console.log(`[brain] LLM 流停滞 ${LLM_STREAM_TIMEOUT_MS / 1000}s（无模型事件），已 abort`)
+        }, LLM_STREAM_TIMEOUT_MS)
+      }
       const p = agent.prompt(enrichedInput).then(
         () => { done = true },
         (e: unknown) => { done = true; throw e },
       )
-      return { promise: p, cancel: () => { done = true; clearTimeout(timer) } }
+      return {
+        promise: p,
+        cancel: () => {
+          done = true
+          stallReset = null
+          clearTimeout(timer)
+        },
+      }
     }
 
     const settle = async (): Promise<void> => {
