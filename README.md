@@ -69,7 +69,7 @@ flowchart TB
         Tools <-->|0.0.0.0:8765<br/>Token + IPC v2| RPC
     end
 
-    Agent -->|tool-calling| Cloud[GLM-4.6v]
+    Agent -->|tool-calling| Cloud[可配置云端模型<br/>MODEL/VISION_MODEL]
     Gate --> Android[Android 应用 / 系统能力]
     Sense --> Android
 ```

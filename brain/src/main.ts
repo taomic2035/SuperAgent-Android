@@ -102,7 +102,9 @@ async function main(): Promise<void> {
         : undefined
     vision =
       env("VISION", "1") === "1" && tier === "primary" && !localOnly
-        ? buildLlmVisionMarks(models, resolved.model)
+        // 视觉可配置（GPT 边界）：VISION_* 独立配置时用独立视觉模型（不随降级链变）；
+        // 未配置跟随主模型（现状语义）。fail-open 与坐标换算不变。
+        ? buildLlmVisionMarks(models, resolved.visionModel ?? resolved.model)
         : undefined
     // ME-2/ME-5 reflect 家族跟随模型链（与 relevance 同防降级脑裂）：local 闲聊不提取，ME_REFLECT=0 可关
     reflector =

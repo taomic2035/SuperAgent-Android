@@ -3,10 +3,13 @@ import type { Model, MutableModels } from "@earendil-works/pi-ai"
 import type { Mark } from "../ipc/types.ts"
 
 /**
- * 感知 L1（BD-02.2 brain 侧）：截图送 GLM-4.6V 识别可交互元素（marks）。
+ * 感知 L1（BD-02.2 brain 侧）：截图送**可配置的视觉模型**识别可交互元素（marks）。
+ * 模型由调用方注入（main：VISION_BASE_URL/VISION_API_KEY/VISION_MODEL 独立配置时用
+ * 独立视觉模型，缺省跟随主模型——历史验证用 GLM-4.6V，当前配置见 SESSION.md）。
  * 坐标为截图像素（长边 1600，由 body ScreenshotService 限定）——与 control.tap 的
  * 屏幕像素坐标不同单位！brain 侧按屏幕/截图比例换算后再下发。
- * fail-open：识别异常时返回空 marks（perceive 结果仍带 screenshotRef 供模型自看）。
+ * fail-open：识别异常时返回空 marks（perceive 结果仍带 screenshotRef 供模型自看）；
+ * provider 失败/无效输出不伪装成视觉成功。
  */
 
 export type VisionMarksFn = (imageBase64: string) => Promise<Mark[]>

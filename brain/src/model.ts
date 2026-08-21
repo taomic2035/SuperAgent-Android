@@ -17,6 +17,13 @@ export interface ResolvedModel {
   /** M3 本地（仅当主模型为云端时作为最终兜底）。 */
   localModel?: Model<"openai-completions">
   localLabel?: string
+  /**
+   * 视觉模型（GPT 扫描 2026-08-21：视觉 provider 可配置、不写死型号）：
+   * VISION_BASE_URL + VISION_API_KEY + VISION_MODEL 齐备时注册独立 vision provider——
+   * 不随主模型降级链重建（独立解析）；未配置时为 undefined，视觉跟随主模型（现状语义）。
+   */
+  visionModel?: Model<"openai-completions">
+  visionLabel?: string
 }
 
 export function resolveModel(): ResolvedModel {
@@ -69,6 +76,23 @@ export function resolveModel(): ResolvedModel {
       if (m) {
         resolved.localModel = m
         resolved.localLabel = `local/${localModel}（离线闲聊）`
+      }
+    }
+    // 视觉独立配置（GPT 边界：默认视觉配置不得隐式改变主规划模型——反之亦然，独立注册互不影响）
+    const visionBase = env("VISION_BASE_URL", "")
+    const visionKey = env("VISION_API_KEY", "")
+    const visionModelId = env("VISION_MODEL", "")
+    if (visionBase && visionModelId) {
+      const p = buildOpenAiCompatProvider({
+        id: "vision", name: "Vision provider", baseUrl: visionBase,
+        apiKey: visionKey || undefined,
+        modelId: visionModelId, modelName: visionModelId, vision: true,
+      })
+      models.setProvider(p)
+      const m = models.getModel("vision", visionModelId) as Model<"openai-completions"> | undefined
+      if (m) {
+        resolved.visionModel = m
+        resolved.visionLabel = `vision/${visionModelId}（独立视觉）`
       }
     }
     return resolved

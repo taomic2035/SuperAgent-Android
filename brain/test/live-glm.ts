@@ -1,7 +1,7 @@
 /**
  * GLM live tool-call 测试（TL-03 / M5 验收项）。
  * 手动触发：GLM_API_KEY=你的key npx tsx test/live-glm.ts
- * 验证：GLM-4.6v 经 OpenAI 兼容层完成至少一次 tool_call 往返。
+ * 验证：主模型（历史验证 GLM-4.6v；当前配置见 SESSION.md）经 OpenAI 兼容层完成至少一次 tool_call 往返。
  */
 import assert from "node:assert/strict"
 import { startMockBody } from "./mock-body.ts"
