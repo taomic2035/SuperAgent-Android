@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs"
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, chmodSync } from "node:fs"
+import { createHash } from "node:crypto"
 import { join } from "node:path"
 import { createInterface } from "node:readline/promises"
 import { stdin, stdout } from "node:process"
@@ -9,9 +10,13 @@ import type { MemoryEntry, MemoryImportResult, MemoryMaintainResult } from "../i
  * ME-8 记忆备份导出/恢复（docs/15 §7——"不丢记忆"承诺的兑现项）：
  * body SQLite 是权威存储，但身处 app 私有沙箱（pm clear/卸载/换机即失）——
  * brain 定期全量拉取落 Termux 快照；恢复为手动命令（不自动——尊重用户清空记忆的意愿）。
+ *
+ * C-14（docs/16 §7）健壮性：原子写（tmp+rename，写失败旧快照保留=last-good）、
+ * schemaVersion + entries sha256 checksum（恢复前校验，坏档拒绝）、0600 权限（明文记忆仅 owner）。
  */
 
 const BACKUP_INTERVAL_MS = 6 * 60 * 60 * 1000 // 6h：个人助手记忆日增量小，高频无意义
+const SNAPSHOT_SCHEMA_VERSION = 1
 
 function snapshotPath(): string {
   const dir = process.env.SUPER_AGENT_STATE_DIR ?? join(process.env.HOME ?? process.cwd(), ".super-agent")
@@ -19,9 +24,35 @@ function snapshotPath(): string {
 }
 
 interface SnapshotFile {
+  schemaVersion: number
   ts: number
   count: number
+  checksum: string
   entries: MemoryEntry[]
+}
+
+function entriesChecksum(entries: MemoryEntry[]): string {
+  return createHash("sha256").update(JSON.stringify(entries)).digest("hex")
+}
+
+/** C-14 原子写：tmp → 0600 → rename（写失败旧快照天然保留）。 */
+function writeSnapshotAtomic(file: string, snapshot: SnapshotFile): void {
+  const tmp = `${file}.tmp-${Date.now()}`
+  writeFileSync(tmp, JSON.stringify(snapshot), "utf8")
+  chmodSync(tmp, 0o600)
+  renameSync(tmp, file)
+}
+
+/** C-14 读档校验：版本/校验和不符直接抛（恢复命令会明确报错，不吞坏档）。 */
+function readSnapshotVerified(file: string): SnapshotFile {
+  const snap = JSON.parse(readFileSync(file, "utf8")) as SnapshotFile
+  if (snap.schemaVersion !== SNAPSHOT_SCHEMA_VERSION) {
+    throw new Error(`快照版本不识别（${snap.schemaVersion}，期望 ${SNAPSHOT_SCHEMA_VERSION}）`)
+  }
+  if (snap.checksum !== entriesChecksum(snap.entries)) {
+    throw new Error("快照校验和不符（文件损坏或被篡改），拒绝恢复")
+  }
+  return snap
 }
 
 /** 立即备份：memory.export（全量含 revoked）→ Termux 快照文件。返回条目数。 */
@@ -29,8 +60,14 @@ export async function backupNow(body: BodyClient, file = snapshotPath()): Promis
   const entries = await body.rpc<MemoryEntry[]>("memory.export", {})
   const dir = join(file, "..")
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-  const snapshot: SnapshotFile = { ts: Date.now(), count: entries.length, entries }
-  writeFileSync(file, JSON.stringify(snapshot), "utf8")
+  const snapshot: SnapshotFile = {
+    schemaVersion: SNAPSHOT_SCHEMA_VERSION,
+    ts: Date.now(),
+    count: entries.length,
+    checksum: entriesChecksum(entries),
+    entries,
+  }
+  writeSnapshotAtomic(file, snapshot)
   return entries.length
 }
 
@@ -60,7 +97,7 @@ export async function checkRestoreHint(body: BodyClient): Promise<void> {
     if (entries.length > 0) return
     const file = snapshotPath()
     if (!existsSync(file)) return
-    const snap = JSON.parse(readFileSync(file, "utf8")) as SnapshotFile
+    const snap = readSnapshotVerified(file) // C-14：坏档不提示恢复（校验失败走 catch 静默）
     const active = snap.entries.filter((e) => !e.revoked)
     if (active.length > 0) {
       console.log(`[brain] ME-8 检测到 body 记忆为空但快照有 ${active.length} 条——如需找回：cd brain && npm run memory-restore`)
@@ -90,13 +127,20 @@ export async function maintainIfDue(body: BodyClient, dir = process.env.SUPER_AG
   }
 }
 
-/** 手动恢复（CLI）：展示快照 active 条目 → y/n 确认 → memory.import 补缺。 */
+/** 手动恢复（CLI）：校验快照 → 展示 active 条目 → y/n 确认 → memory.import 补缺。 */
 export async function restoreInteractive(body: BodyClient, file = snapshotPath()): Promise<void> {
   if (!existsSync(file)) {
     console.log(`无快照文件：${file}`)
     process.exit(1)
   }
-  const snap = JSON.parse(readFileSync(file, "utf8")) as SnapshotFile
+  const snap = (() => {
+    try {
+      return readSnapshotVerified(file) // C-14：版本/校验和不符明确报错退出，不吞坏档
+    } catch (err) {
+      console.log(`快照校验失败，拒绝恢复：${err instanceof Error ? err.message : String(err)}`)
+      process.exit(1)
+    }
+  })()
   const active = snap.entries.filter((e) => !e.revoked)
   console.log(`快照（${new Date(snap.ts).toLocaleString()}）：共 ${snap.count} 条，active ${active.length} 条\n`)
   for (const e of active) {

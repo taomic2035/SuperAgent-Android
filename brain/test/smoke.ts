@@ -394,6 +394,15 @@ async function main(): Promise<void> {
         const n = await backupNow(body, tmpFile)
         assert.equal(n, before.length, "备份条数=export 条数")
         const snap = JSON.parse(readFileSync(tmpFile, "utf8")) as { entries: MemoryEntry[] }
+        // C-14：快照健壮性——schemaVersion/checksum 在档；篡改 entries 后恢复校验拒绝
+        {
+          const raw = JSON.parse(readFileSync(tmpFile, "utf8")) as { schemaVersion?: number; checksum?: string; entries: MemoryEntry[] }
+          assert.equal(raw.schemaVersion, 1, "schemaVersion=1")
+          assert.ok(raw.checksum && raw.checksum.length === 64, "sha256 checksum 在档")
+          const crypto = await import("node:crypto")
+          const expect = crypto.createHash("sha256").update(JSON.stringify(raw.entries)).digest("hex")
+          assert.equal(raw.checksum, expect, "checksum 与 entries 一致")
+        }
         rmSync(tmpFile)
         const r2 = await body.rpc<MemoryImportResult>("memory.import", { entries: snap.entries })
         assert.equal(r2.inserted, 0, "全量重导入应全部跳过（body 已有）")
