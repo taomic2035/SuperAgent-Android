@@ -95,7 +95,7 @@ async function main(): Promise<void> {
       assert.deepEqual(saved.trace[2].args, {})
       const ctx = buildResumeContext(saved)
       assert.ok(ctx.includes("断点续跑") && ctx.includes("control.launch（com.drink） ✓") && ctx.includes("control.selectOption（大杯） ✗"))
-      const resumed = resumeRun()
+      const resumed = resumeRun("manual")
       assert.ok(resumed && resumed.trace.length === 3)
       finishRun("success")
       assert.equal(hasResumableRun(), false) // 成功终态不可续
@@ -222,12 +222,17 @@ async function main(): Promise<void> {
         body,
         loadPersonas().personas,
         undefined,
-        async (b64) => {
+        async (b64, screenshotWidth, screenshotHeight) => {
           assert.ok(b64.length > 0)
-          return [
-            { index: 0, text: "立即支付", center: { x: 400, y: 800 } },  // VLM 截图像素
-            { index: 1, text: "返回", center: { x: 20, y: 30 } },
-          ]
+          assert.equal(screenshotWidth, 500)
+          assert.equal(screenshotHeight, 1000)
+          return {
+            status: "success" as const,
+            marks: [
+              { index: 0, text: "立即支付", center: { x: 400, y: 800 } },
+              { index: 1, text: "返回", center: { x: 20, y: 30 } },
+            ],
+          }
         },
       )
       const perceive = toolsV.find((t) => t.name === "perceive.screen")!
@@ -237,13 +242,11 @@ async function main(): Promise<void> {
       const parsed = JSON.parse(r.content[0].text) as ScreenResult
       assert.equal(parsed.kind, "vision")
       assert.equal(parsed.marks?.length, 2)
-      // 坐标换算：400 × (2256/1600) = 564, 800 × 1.41 = 1128
-      const scale = 2256 / 1600
-      assert.equal(parsed.marks![0].center.x, Math.round(400 * scale))
-      assert.equal(parsed.marks![0].center.y, Math.round(800 * scale))
-      assert.equal(parsed.marks![1].center.x, Math.round(20 * scale))
-      assert.equal(parsed.marks![1].center.y, Math.round(30 * scale))
-      ok("perceive.screen(vision)：VLM marks 坐标按 1.41 因子换算为屏幕像素")
+      assert.equal(parsed.marks![0].center.x, 800)
+      assert.equal(parsed.marks![0].center.y, 1600)
+      assert.equal(parsed.marks![1].center.x, 40)
+      assert.equal(parsed.marks![1].center.y, 60)
+      ok("perceive.screen(vision)：VLM marks 按实际屏幕与截图尺寸换算")
     }
 
     // TC-08：证据驳回计数（×3 升级建议转人工；好证据通过）

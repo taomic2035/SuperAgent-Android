@@ -154,8 +154,7 @@ class BodyCore(
                         is VisionCaptureResult.Blocked ->
                             return@rpc RpcResponse.failure(req.id, "VISION_BLOCKED", "敏感会话或前台应用未知，禁止视觉导出", "privacy")
                         is VisionCaptureResult.Completed -> {
-                            val ref = captured.screenshotRef
-                            if (ref == null) return@rpc ok(req, captured.screen)
+                            val capture = captured.capture ?: return@rpc ok(req, captured.screen)
                             return@rpc ok(
                                 req,
                                 captured.screen.copy(
@@ -163,7 +162,11 @@ class BodyCore(
                                     marks = null,
                                     nodes = null,
                                     pageTexts = null,
-                                    screenshotRef = ref,
+                                    screenshotRef = capture.ref,
+                                    screenWidth = capture.screenWidth,
+                                    screenHeight = capture.screenHeight,
+                                    screenshotWidth = capture.screenshotWidth,
+                                    screenshotHeight = capture.screenshotHeight,
                                 ),
                             )
                         }

@@ -6,30 +6,29 @@
 
 ## Task 1: Extend optional perception metadata
 
-- [ ] Add optional screen/screenshot dimensions and typed `visionFallback` to the shared contract, Kotlin protocol, and TypeScript mirror.
-- [ ] Have `ScreenshotService` retain real display dimensions and expose capture metadata without changing the privacy gate.
-- [ ] Attach metadata only to successfully captured `ScreenResult` values.
-- [ ] Run contract mirror RED/GREEN.
+- [x] Add optional screen/screenshot dimensions and typed `visionFallback` to the shared contract, Kotlin protocol, and TypeScript mirror.
+- [x] Have `ScreenshotService` retain real display dimensions and expose capture metadata without changing the privacy gate.
+- [x] Attach metadata only to successfully captured `ScreenResult` values.
+- [x] Run contract mirror RED/GREEN.
 
 ## Task 2: Make VLM results typed and bounded
 
-- [ ] Extract a pure parser accepting raw output and screenshot dimensions.
-- [ ] Behavior RED for malformed JSON, non-array output, NaN/infinite/negative/out-of-image coordinates.
-- [ ] Return discriminated results; valid empty array remains a successful no-elements result.
-- [ ] Catch provider errors inside the adapter and return `provider_unavailable` without exposing provider text.
+- [x] Extract a pure parser accepting raw output and screenshot dimensions.
+- [x] Behavior RED for malformed JSON, non-array output, NaN/infinite/negative/out-of-image coordinates.
+- [x] Return discriminated results; valid empty array remains a successful no-elements result.
+- [x] Catch provider errors inside the adapter and return `provider_unavailable` without exposing provider text.
 
 ## Task 3: Enforce truthful fallback in the tool path
 
-- [ ] On typed VLM failure, request fresh a11y and return it with `visionFallback`; remove screenshot reference from model-facing fallback.
-- [ ] On success, scale coordinates with actual X/Y ratios and validate final screen bounds.
-- [ ] Add tool-chain tests for success, provider failure, malformed output, invalid coordinates, and missing dimensions.
-- [ ] Preserve C-02: sensitive screenshot refusal happens in Body before any VLM call.
+- [x] On typed VLM failure, request fresh a11y and return it with `visionFallback`; remove screenshot reference from model-facing fallback.
+- [x] On success, scale coordinates with actual X/Y ratios and validate final screen bounds.
+- [x] Add tool-chain tests for success, provider failure, malformed output, invalid coordinates, and missing dimensions.
+- [x] Preserve C-02: sensitive screenshot refusal happens in Body before any VLM call.
 
 ## Task 4: Document configuration and verify
 
-- [ ] Add a README configuration table and placeholder-only `qwen3.7-plus` example.
-- [ ] Update docs/07 with optional metadata and typed fallback contract.
-- [ ] Update docs/17 diagrams/tables with provider-independent fallback flow.
-- [ ] Run brain typecheck, contract, smoke, integration, dedicated fallback tests, and body full build.
-- [ ] Request architecture and safety cross-review before closing the parent migration claim.
-
+- [x] Add a README configuration table and placeholder-only `qwen3.7-plus` example.
+- [x] Update docs/07 with optional metadata and typed fallback contract.
+- [x] Update docs/17 diagrams/tables with provider-independent fallback flow.
+- [x] Run brain typecheck, contract, smoke, integration, dedicated fallback tests, and body full build.
+- [x] Request architecture and safety cross-review before closing the parent migration claim.

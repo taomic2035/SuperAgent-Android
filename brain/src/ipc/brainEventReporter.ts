@@ -16,6 +16,7 @@ let pauseRequested = false
 let bootSession = `boot-${Date.now()}`
 /** C-12（docs/16 §8）：run 终态已上报——迟到的 act/act_done 不再发送（UI 已收终态，迟到步进只添噪） */
 let finished = false
+let lastFinishKind: FinishResultKind | undefined
 /** C-12：事件发送串行链——seq 单调不保证到达序（HTTP 并发），act_done 晚于 finish 到达会被
  *  UI 的 seq 水线去重丢弃终态（UI 卡 RUNNING）。链内分配 seq + 顺序发送，双保险。 */
 let emitChain: Promise<void> = Promise.resolve()
@@ -25,6 +26,7 @@ export function initBrainEvents(client: BodyClient): void {
   bootSession = `boot-${Date.now()}`
   seq = 0
   finished = false
+  lastFinishKind = undefined
 }
 
 export function requestStop(): void {
@@ -76,6 +78,7 @@ export async function reportPromptStart(goal: string): Promise<void> {
   taskId = `task-${Date.now()}-${bootSession}`
   stepIndex = 0
   finished = false // C-12：新任务开启，恢复事件上报
+  lastFinishKind = undefined
   await emit("prompt_start", `目标：${goal.slice(0, 20)}`)
 }
 
@@ -127,6 +130,22 @@ export type FinishResultKind =
   | "unknown_side_effect" // 停止后设备状态未确认（保留，UI 已映射 FAILED·确认中）
 
 export async function reportFinish(resultKind: FinishResultKind, text: string): Promise<void> {
+  if (finished) return
   await emit("finish", text, { resultKind })
   finished = true // C-12：终态已入链——此后迟到的 act/act_done 全丢弃
+  lastFinishKind = resultKind
+}
+
+/**
+ * C-06：PAUSED 已是 reporter 终态，但用户仍可直接停止该 checkpoint。
+ * 仅允许同一 task lifecycle 从 paused 单向追加一次 stopped，避免重开 taskId
+ * 或放宽通用的“终态后丢弃迟到事件”门禁。
+ */
+export async function reportStoppedAfterPause(text: string): Promise<boolean> {
+  if (!finished || lastFinishKind !== "paused") return false
+  finished = false
+  await emit("finish", text, { resultKind: "stopped" })
+  finished = true
+  lastFinishKind = "stopped"
+  return true
 }

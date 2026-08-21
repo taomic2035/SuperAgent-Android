@@ -4,12 +4,28 @@ import com.superagent.common.Mark
 import com.superagent.common.Point
 import com.superagent.common.ScreenResult
 import com.superagent.body.core.security.SensitiveSessionTracker
+import com.superagent.body.core.screenshot.captureGeometryMatches
+import com.superagent.body.core.screenshot.captureGeometryRemainedStable
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class PerceptionRouteTest {
+
+    @Test
+    fun `capture geometry rejects rotation or resize after projection attach`() {
+        assertTrue(captureGeometryMatches(1080, 2400, 1080, 2400))
+        assertFalse(captureGeometryMatches(1080, 2400, 2400, 1080))
+        assertFalse(captureGeometryMatches(1080, 2400, 900, 2000))
+    }
+
+    @Test
+    fun `capture geometry rejects rotation or resize while waiting for a frame`() {
+        assertTrue(captureGeometryRemainedStable(1080, 2400, 1080, 2400, 1080, 2400))
+        assertFalse(captureGeometryRemainedStable(1080, 2400, 1080, 2400, 2400, 1080))
+        assertFalse(captureGeometryRemainedStable(1080, 2400, 1080, 2400, 900, 2000))
+    }
 
     @Test
     fun `explicit vision is blocked in synchronized sensitive session`() {
@@ -178,7 +194,7 @@ class PerceptionRouteTest {
 
         val completed = result as VisionCaptureResult.Completed
         assertEquals(listOf("scan", "sync", "capture"), events)
-        assertEquals("shot.jpg", completed.screenshotRef)
+        assertEquals("shot.jpg", completed.capture)
         assertFalse(completed.screen.sensitiveSession)
     }
 

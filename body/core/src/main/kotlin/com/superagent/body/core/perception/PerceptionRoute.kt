@@ -8,15 +8,15 @@ internal sealed interface PerceptionRoute {
     data object VisionBlocked : PerceptionRoute
 }
 
-internal sealed interface VisionCaptureResult {
+internal sealed interface VisionCaptureResult<out T> {
     val screen: ScreenResult
 
-    data class Completed(
+    data class Completed<T>(
         override val screen: ScreenResult,
-        val screenshotRef: String?,
-    ) : VisionCaptureResult
+        val capture: T?,
+    ) : VisionCaptureResult<T>
 
-    data class Blocked(override val screen: ScreenResult) : VisionCaptureResult
+    data class Blocked(override val screen: ScreenResult) : VisionCaptureResult<Nothing>
 }
 
 /** 纯路由策略；调用方负责先同步 fresh accessibility 前台状态。 */
@@ -38,12 +38,12 @@ internal fun perceptionRoute(
  * 不可逆截图操作的唯一窄闸门：fresh scan → 同步前台 → 判定 → capture。
  * 未知前台与敏感会话均 fail-closed，且不会调用 [capture]。
  */
-internal fun guardedVisionCapture(
+internal fun <T> guardedVisionCapture(
     freshScan: () -> ScreenResult,
     synchronizeForeground: (String?) -> Unit,
     isSensitive: () -> Boolean,
-    capture: () -> String?,
-): VisionCaptureResult {
+    capture: () -> T?,
+): VisionCaptureResult<T> {
     val scanned = freshScan()
     val foregroundPackage = scanned.appPackage?.trim()?.takeIf { it.isNotEmpty() }
     val normalized = scanned.copy(appPackage = foregroundPackage)

@@ -154,7 +154,7 @@ class UiStateControllerTest {
     }
 
     @Test
-    fun `resume request stays PAUSED when automatic resume is not yet available`() {
+    fun `raw resume event does not claim UI state without local acceptance`() {
         emitBrain("task-1", 1, "prompt_start", "开始")
         emitBrain("task-1", 2, "finish", "已暂停", resultKind = "paused")
         assertEquals(UiStateController.UiState.PAUSED, controller.state)
@@ -162,11 +162,11 @@ class UiStateControllerTest {
         emitVoice("resume_request")
 
         assertEquals(UiStateController.UiState.PAUSED, controller.state)
-        assertEquals("暂不能自动恢复·请重新发起任务", controller.snapshot().currentStep)
+        assertEquals("已暂停", controller.snapshot().currentStep)
     }
 
     @Test
-    fun `requestResume publishes no event before C06 is implemented`() {
+    fun `PAUSED requestResume publishes once and immediately shows restoring`() {
         emitBrain("task-1", 1, "prompt_start", "开始")
         emitBrain("task-1", 2, "finish", "已暂停", resultKind = "paused")
         var voiceEvents = 0
@@ -174,22 +174,44 @@ class UiStateControllerTest {
 
         val accepted = controller.requestResume()
 
-        assertFalse(accepted)
-        assertEquals(0, voiceEvents)
-        assertEquals(UiStateController.UiState.PAUSED, controller.state)
+        assertTrue(accepted)
+        assertEquals(1, voiceEvents)
+        assertEquals(UiStateController.UiState.THINKING, controller.state)
+        assertEquals("正在恢复", controller.snapshot().currentStep)
     }
 
     @Test
-    fun `resume request during PAUSING is ignored until pause settles`() {
+    fun `requestResume during PAUSING publishes zero`() {
         emitBrain("task-1", 1, "prompt_start", "开始")
         emitBrain("task-1", 2, "act", "执行中")
         emitVoice("pause_request")
         assertEquals(UiStateController.UiState.PAUSING, controller.state)
 
-        emitVoice("resume_request")
+        var voiceEvents = 0
+        events.addListener { type, _ -> if (type == "voice") voiceEvents++ }
 
+        val accepted = controller.requestResume()
+
+        assertFalse(accepted)
+        assertEquals(0, voiceEvents)
         assertEquals(UiStateController.UiState.PAUSING, controller.state)
         assertEquals("暂停中·当前动作完成后停", controller.snapshot().currentStep)
+    }
+
+    @Test
+    fun `repeated requestResume publishes one total`() {
+        emitBrain("task-1", 1, "prompt_start", "开始")
+        emitBrain("task-1", 2, "finish", "已暂停", resultKind = "paused")
+        var voiceEvents = 0
+        events.addListener { type, _ -> if (type == "voice") voiceEvents++ }
+
+        val first = controller.requestResume()
+        val second = controller.requestResume()
+
+        assertTrue(first)
+        assertFalse(second)
+        assertEquals(1, voiceEvents)
+        assertEquals(UiStateController.UiState.THINKING, controller.state)
     }
 
     @Test

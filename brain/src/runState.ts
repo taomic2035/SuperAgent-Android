@@ -9,7 +9,7 @@ import { join } from "node:path"
  * trace 单调序号、脱敏后落盘。pi AgentHarness/Session 不用（见 AD-05）。
  */
 
-export type RunOutcome = "success" | "failed" | "crashed" | "needs_human" | "closed" | "paused"
+export type RunOutcome = "success" | "failed" | "crashed" | "needs_human" | "closed" | "paused" | "stopped"
 
 /**
  * closed（审计 P1-01）：模型口头收笔/对话型回合的终态——未经 task.finish 证据核验，
@@ -49,8 +49,10 @@ function stateFile(): string {
 }
 
 let current: RunState | null = null
+let resumeClaimed = false
 
 export function beginRun(goal: string): void {
+  resumeClaimed = false
   current = { goal, trace: [], startedAt: Date.now() }
   persist()
 }
@@ -83,6 +85,7 @@ const RESUMABLE: Record<RunOutcome, boolean> = {
   needs_human: true,
   closed: false,
   paused: true, // C-06：暂停可续（resume_request 自动断点续跑）
+  stopped: false, // C-06：用户停止是不可恢复终态，区别于一般 failed
 }
 
 /** 标记 run 结束（成功/失败/崩溃都调），落盘全历史。成功时清证据驳回计数。
@@ -91,6 +94,7 @@ export function finishRun(outcome: RunOutcome, failureReason?: string): void {
   if (!current) return
   if (current.outcome) return // 已终态：不覆盖、不重归档
   current.outcome = outcome
+  resumeClaimed = false
   current.failureReason = failureReason
   if (outcome === "success") current.finishRejectCount = 0
   persist()
@@ -149,6 +153,7 @@ export function noteFinishRejected(): number {
 
 export function resetRun(): void {
   current = null
+  resumeClaimed = false
   clearPersisted()
 }
 
@@ -162,18 +167,53 @@ export function hasResumableRun(): boolean {
   return peekRun() !== null
 }
 
-export function resumeRun(): RunState | null {
+export type ResumeClaimMode = "automatic" | "manual"
+
+/**
+ * Atomically claims one persisted lifecycle for resume inside this process.
+ * Automatic UI/event resume is deliberately narrower than manual crash recovery:
+ * it accepts only a settled paused run, while manual recovery may also reopen an
+ * interrupted snapshot or an explicitly resumable failure outcome.
+ */
+export function resumeRun(mode: ResumeClaimMode = "automatic"): RunState | null {
+  if (resumeClaimed) return null
   const saved = loadPersisted()
-  if (saved) {
-    current = saved
-    // C-05：续跑=该 run 的新生命周期——清旧终态与核验标记（finishRun 幂等门下终态只写一次，
-    // 续跑成功/失败是新的那一次；无终态快照落盘后 peekRun 仍视为可续）
-    current.outcome = undefined
-    current.failureReason = undefined
-    current.finishVerified = false
-    persist()
-  }
+  if (!saved) return null
+  const eligible = mode === "automatic"
+    ? saved.outcome === "paused"
+    : saved.outcome === undefined || RESUMABLE[saved.outcome]
+  if (!eligible) return null
+
+  resumeClaimed = true
+  current = saved
+  // C-05：续跑=该 run 的新生命周期。只有领取成功后才清旧终态字段，
+  // 防止无资格/重复请求破坏盘上 checkpoint。
+  current.outcome = undefined
+  current.failureReason = undefined
+  current.finishVerified = false
+  persist()
   return current
+}
+
+/**
+ * Atomically turns any persisted active/resumable checkpoint into one closed,
+ * non-resumable terminal. This deliberately bypasses finishRun's terminal
+ * idempotency guard so a settled paused checkpoint can be cancelled, while a
+ * repeated stop against the resulting stopped checkpoint remains a no-op.
+ */
+export function stopPersistedRun(reason = "用户停止"): boolean {
+  const saved = loadPersisted()
+  if (!saved) return false
+  if (saved.outcome && !RESUMABLE[saved.outcome]) return false
+
+  current = saved
+  current.outcome = "stopped"
+  current.failureReason = reason
+  current.finishVerified = false
+  resumeClaimed = false
+  persist()
+  archiveRun()
+  return true
 }
 
 /**

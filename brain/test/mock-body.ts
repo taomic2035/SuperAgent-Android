@@ -86,6 +86,8 @@ export function startMockBody(options: MockBodyOptions): Promise<{ port: number;
           return void sendJson(res, 200, reply({
             signature: "mock-sig-vision", kind: "vision" as const, blank: false,
             appPackage: "com.example.shop", screenshotRef: "shot-1.jpg",
+            screenWidth: 1000, screenHeight: 2000,
+            screenshotWidth: 500, screenshotHeight: 1000,
           }))
         }
         steps++

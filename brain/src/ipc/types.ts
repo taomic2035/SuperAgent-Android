@@ -54,7 +54,14 @@ export interface ScreenResult {
   sensitiveSession?: boolean
   /** 视觉感知（L1）截图引用：GET /blob/{ref} 取 JPEG，brain 侧送 VLM 识别 marks */
   screenshotRef?: string
+  screenWidth?: number
+  screenHeight?: number
+  screenshotWidth?: number
+  screenshotHeight?: number
+  visionFallback?: VisionFallback
 }
+
+export type VisionFallback = "provider_unavailable" | "invalid_output" | "invalid_coordinates" | "missing_dimensions"
 
 export interface AsrResult {
   text: string
@@ -202,7 +209,7 @@ export interface MemoryMaintainResult {
 export interface RunRecord {
   id: number
   goal: string
-  /** success | failed | crashed | needs_human | closed（RunOutcome 枚举） */
+  /** success | failed | crashed | needs_human | closed | paused | stopped（RunOutcome 枚举） */
   outcome: string
   failureReason?: string
   trace?: TraceStep[]

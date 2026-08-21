@@ -50,6 +50,14 @@ class RunArchiveStoreTest {
     }
 
     @Test
+    fun `用户停止终态可归档且保持不可续语义`() {
+        store.archive("停止任务", "stopped", "用户停止", emptyList(), 100L, 200L)
+
+        assertEquals("stopped", db.rows.single().outcome)
+        assertEquals("用户停止", db.rows.single().failureReason)
+    }
+
+    @Test
     fun `全量留存不淘汰`() {
         repeat(120) { store.archive("任务$it", "closed", null, emptyList(), it.toLong(), it.toLong() + 1) }
         assertEquals(120, db.rows.size, "Iron Law：环形 30 条会丢，全量归档一条不丢")

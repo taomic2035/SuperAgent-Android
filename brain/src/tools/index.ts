@@ -24,6 +24,7 @@ import type {
   SkillRunResult,
   VoiceprintEnrollResult,
   VoiceprintIdentifyResult,
+  VisionFallback,
 } from "../ipc/types.ts"
 import type { Persona } from "../personas/promptBuilder.ts"
 import type { Reflector } from "../memory/reflect.ts"
@@ -39,6 +40,63 @@ function idem(tool: string, toolCallId: string): string {
 const HITL_RPC_TIMEOUT_MS = 90_000
 const SPEECH_RPC_TIMEOUT_MS = 75_000
 const SKILL_RUN_RPC_TIMEOUT_MS = 150_000
+
+export async function resolveVisionScreen(
+  screen: ScreenResult,
+  loadScreenshot: () => Promise<Buffer>,
+  vision: VisionMarksFn | undefined,
+  freshA11y: () => Promise<ScreenResult>,
+): Promise<ScreenResult> {
+  if (!screen.screenshotRef) return screen
+
+  const fallback = async (visionFallback: VisionFallback): Promise<ScreenResult> => {
+    const fresh = await freshA11y()
+    return { ...fresh, kind: "a11y", screenshotRef: undefined, visionFallback }
+  }
+  const { screenWidth, screenHeight, screenshotWidth, screenshotHeight } = screen
+  if (
+    !Number.isFinite(screenWidth) || !Number.isFinite(screenHeight) ||
+    !Number.isFinite(screenshotWidth) || !Number.isFinite(screenshotHeight) ||
+    screenWidth! <= 0 || screenHeight! <= 0 || screenshotWidth! <= 0 || screenshotHeight! <= 0
+  ) {
+    return fallback("missing_dimensions")
+  }
+  if (!vision) return fallback("provider_unavailable")
+
+  let result
+  try {
+    const buf = await loadScreenshot()
+    result = await vision(buf.toString("base64"), screenshotWidth!, screenshotHeight!)
+  } catch {
+    return fallback("provider_unavailable")
+  }
+  if (result.status !== "success") return fallback(result.status)
+
+  const scaleX = screenWidth! / screenshotWidth!
+  const scaleY = screenHeight! / screenshotHeight!
+  const scaled = result.marks.map((mark) => ({
+    ...mark,
+    center: {
+      x: Math.round(mark.center.x * scaleX),
+      y: Math.round(mark.center.y * scaleY),
+    },
+  }))
+  const invalid = result.marks.some((mark, index) => {
+    const { x, y } = mark.center
+    const final = scaled[index].center
+    return !Number.isFinite(x) || !Number.isFinite(y) ||
+      x < 0 || y < 0 || x >= screenshotWidth! || y >= screenshotHeight! ||
+      final.x < 0 || final.y < 0 || final.x >= screenWidth! || final.y >= screenHeight!
+  })
+  if (invalid) return fallback("invalid_coordinates")
+
+  return {
+    ...screen,
+    marks: scaled,
+    pageTexts: scaled.map((mark) => mark.text),
+    visionFallback: undefined,
+  }
+}
 
 export function buildTools(
   body: BodyClient,
@@ -59,35 +117,15 @@ export function buildTools(
       }),
       execute: async (_id, params: any) => {
         const screen = await body.rpc<ScreenResult>("perceive.screen", { mode: params.mode ?? "auto" })
-        setBaseline(screen)
-        let enriched = screen
-        // 感知 L1：body 已给截图引用且有识别器 → 取图送 VLM，marks 并入（识别失败 fail-open 留空）。
-        // 坐标换算：VLM 返回截图像素（body 长边 1600），control.tap 用屏幕像素（1152×2256）。
-        // 因子 = 屏幕 / 截图（body ScreenshotService scale=1600/max(w,h) → 竖屏 2256/1600=1.41）。
-        if (screen.screenshotRef && vision) {
-          try {
-            const buf = await body.blob(screen.screenshotRef)
-            const marks = await vision(buf.toString("base64"))
-            if (marks.length) {
-              const SCREEN_W = 1152
-              const SCREEN_H = 2256
-              const SHOT_LONG_EDGE = 1600
-              const scale = SCREEN_H / SHOT_LONG_EDGE // 竖屏因子（横屏时用 SCREEN_W/SHOT_LONG_EDGE）
-              enriched = {
-                ...screen,
-                marks: marks.map((m) => ({
-                  ...m,
-                  center: { x: Math.round(m.center.x * scale), y: Math.round(m.center.y * scale) },
-                })),
-                pageTexts: marks.map((m) => m.text),
-              }
-            }
-          } catch {
-            enriched = screen // 取图/识别失败：保留 body 原始结果
-          }
-        }
+        const enriched = await resolveVisionScreen(
+          screen,
+          () => body.blob(screen.screenshotRef!),
+          vision,
+          () => body.rpc<ScreenResult>("perceive.screen", { mode: "a11y" }),
+        )
+        setBaseline(enriched)
         // BR-04.4：raw 只进 runState；进模型上下文的 content 打码（signature/基线/证据核验仍用 raw）
-        return { content: [{ type: "text", text: JSON.stringify(redactScreen(enriched)) }], details: { signature: screen.signature } }
+        return { content: [{ type: "text", text: JSON.stringify(redactScreen(enriched)) }], details: { signature: enriched.signature } }
       },
     },
     {

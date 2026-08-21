@@ -131,8 +131,8 @@ class UiStateController(private val events: EventBus) {
         when (kind) {
             "pause_request" -> if (state == UiState.RUNNING || state == UiState.THINKING) transition(UiState.PAUSING, "暂停中·当前动作完成后停")
             "stop_request" -> if (state == UiState.RUNNING || state == UiState.THINKING || state == UiState.PAUSING || state == UiState.PAUSED) transition(UiState.STOPPING, "停止中")
-            // C-06 自动断点续跑尚未闭环：不得假装已恢复或承诺不可用的“继续”。
-            "resume_request" -> if (state == UiState.PAUSED) transition(UiState.PAUSED, "暂不能自动恢复·请重新发起任务")
+            // resume_request 的本地状态由 requestResume() 在发布前原子迁移；消费侧不重复迁移。
+            "resume_request" -> Unit
         }
         if (kind == "text_input") {
             if (state == UiState.OFFLINE) {
@@ -189,13 +189,13 @@ class UiStateController(private val events: EventBus) {
         return true
     }
 
-    /** C-06 完成前不发布 resume_request：显示拒绝不能代替真实拦截。 */
+    /** C-06：仅 settled PAUSED 可发布一次；先显示恢复中，再交给 brain 原子 claim。 */
     @Synchronized
     fun requestResume(): Boolean {
-        if (state == UiState.PAUSED) {
-            transition(UiState.PAUSED, "暂不能自动恢复·请重新发起任务")
-        }
-        return false
+        if (state != UiState.PAUSED) return false
+        transition(UiState.THINKING, "正在恢复")
+        events.emit("voice", buildJsonObject { put("kind", "resume_request") })
+        return true
     }
 
     fun setOffline() = transition(UiState.OFFLINE, "")

@@ -9,12 +9,13 @@ import { buildLlmRelevanceCheck } from "./guards/relevance.ts"
 import { buildLlmVisionMarks } from "./guards/vision.ts"
 import { loadPersonas } from "./personas/personas.ts"
 import { buildSystemPrompt, buildChatOnlyPrompt } from "./personas/promptBuilder.ts"
-import { beginRun, hasResumableRun, resumeRun, finishRun, peekRun, buildResumeContext, getRun, setArchiveSink } from "./runState.ts"
+import { beginRun, resumeRun, finishRun, stopPersistedRun, peekRun, buildResumeContext, getRun, setArchiveSink } from "./runState.ts"
+import { allowPromptStart, finishStoppedCheckpoint, ResumeCoordinator, type ResumeResult } from "./resumeCoordinator.ts"
 import { env, envInt } from "./env.ts"
 import { speak } from "./tts/index.ts"
 import { scheduleBackup, checkRestoreHint, maintainIfDue } from "./memory/backup.ts"
 import { compactContext } from "./contextWindow.ts"
-import { initBrainEvents, reportPromptStart, reportFinish, isStopRequested, isPaused, clearStop, requestStop, requestPause, resumeFromPause } from "./ipc/brainEventReporter.ts"
+import { initBrainEvents, reportPromptStart, reportFinish, reportStoppedAfterPause, isStopRequested, isPaused, clearStop, requestStop, requestPause, resumeFromPause } from "./ipc/brainEventReporter.ts"
 import { buildReflector, buildFailureReflector } from "./memory/reflect.ts"
 import type { FailureReflector, Reflector } from "./memory/reflect.ts"
 import type { AsrResult, BodyEvent, MemorySearchResult, SkillListResult } from "./ipc/types.ts"
@@ -194,8 +195,8 @@ async function main(): Promise<void> {
   }
 
   /** 带 failover 的 prompt：连续失败 ≥3 次切换模型；120s 流超时；自动注入记忆与匹配技能。 */
-  async function promptAgent(input: string): Promise<void> {
-    clearStop()
+  async function promptAgent(input: string, resume = false): Promise<void> {
+    if (!resume) allowPromptStart(false, isStopRequested, clearStop)
     // ME-2 记忆注入（docs/15 §5）：每轮任务前检索 top-5 以【主人记忆】块前缀注入（fail-open）
     let enrichedInput = input
     lastInjectedMemories = 0
@@ -228,7 +229,7 @@ async function main(): Promise<void> {
       console.warn(`[brain] 技能检索失败（跳过技能路由）：${err instanceof Error ? err.message : String(err)}`)
     }
 
-    void reportPromptStart(input)
+    await reportPromptStart(input)
     // U2-#35 + #35（点奶茶卡选择界面根因）：LLM 流偶发单轮停滞（qwen 实测 20-120s+ 波动）——
     // 超时 abort 防挂死；超时后同上下文重试一轮（服务端偶发排队，重发多可通过）
     const streamTimeout = (): { promise: Promise<void>; cancel: () => void } => {
@@ -245,46 +246,55 @@ async function main(): Promise<void> {
       return { promise: p, cancel: () => { done = true; clearTimeout(timer) } }
     }
 
-    const settle = (): Promise<void> | undefined => {
+    const settle = async (): Promise<void> => {
       if (isStopRequested()) {
-        reportFinish("aborted", "用户已停止")
-        finishRun("failed", "用户停止")
+        await reportFinish("aborted", "用户已停止")
+        finishRun("stopped", "用户停止")
         return
       }
       // #26 暂停 settle：pause terminate 后 run 正常 resolve——必须报 paused（此前误报 success，
       // UI 永远到不了 PAUSED）。runState 记 paused（C-06：RESUMABLE.paused=true——resume_request 自动续跑）
       if (isPaused()) {
-        reportFinish("paused", "已暂停")
+        await reportFinish("paused", "已暂停")
         finishRun("paused", "用户暂停")
         return
       }
       // P1-01 语义一致：finishVerified → success；否则 closed（对话型收笔≠失败，不吓用户）
       if (getRun().finishVerified) {
-        reportFinish("success", "任务完成")
+        await reportFinish("success", "任务完成")
       } else {
-        reportFinish("success", "已回复") // UI 不显示"失败"——对话型收笔是正常行为
+        await reportFinish("success", "已回复") // UI 不显示"失败"——对话型收笔是正常行为
       }
-      return
     }
 
+    if (resume && !allowPromptStart(true, isStopRequested, clearStop)) {
+      await reportFinish("aborted", "用户已停止")
+      finishRun("stopped", "用户停止")
+      return
+    }
     let attempt = streamTimeout()
     try {
       await attempt.promise
       attempt.cancel()
       llmFailures = 0
-      settle()
+      await settle()
       return
     } catch (err) {
       attempt.cancel()
       // #35：非用户停止的首轮失败 → 同上下文重试一轮（流停滞多为服务端偶发，重发可过）
       if (!isStopRequested()) {
         console.log("[brain] LLM 流中断，同上下文重试一轮（#35）")
+        if (resume && !allowPromptStart(true, isStopRequested, clearStop)) {
+          await reportFinish("aborted", "用户已停止")
+          finishRun("stopped", "用户停止")
+          return
+        }
         attempt = streamTimeout()
         try {
           await attempt.promise
           attempt.cancel()
           llmFailures = 0
-          settle()
+          await settle()
           return
         } catch (retryErr) {
           attempt.cancel()
@@ -295,11 +305,16 @@ async function main(): Promise<void> {
       const msg = err instanceof Error ? err.message : String(err)
       if (llmFailures >= 3) {
         if (switchModel(`失败原因：${msg}`)) {
+          if (resume && !allowPromptStart(true, isStopRequested, clearStop)) {
+            await reportFinish("aborted", "用户已停止")
+            finishRun("stopped", "用户停止")
+            return
+          }
           await agent.prompt(enrichedInput)
           return
         }
       }
-      reportFinish(isStopRequested() ? "aborted" : "failed", isStopRequested() ? "用户已停止" : msg.slice(0, 30))
+      await reportFinish(isStopRequested() ? "aborted" : "failed", isStopRequested() ? "用户已停止" : msg.slice(0, 30))
       throw err
     }
   }
@@ -314,6 +329,43 @@ async function main(): Promise<void> {
     taskChain = next
     return next
   }
+
+  const reportResumeTerminal = async (resultKind: "failed" | "aborted", text: string): Promise<void> => {
+    await reportPromptStart("恢复任务")
+    await reportFinish(resultKind, text)
+  }
+  const resumeCoordinator = new ResumeCoordinator({
+    enqueue: enqueueTask,
+    claim: resumeRun,
+    isStopRequested,
+    clearPause: resumeFromPause,
+    cancel: () => { stopPersistedRun("用户停止") },
+    prepare: (saved) => {
+      resetSensitiveSession()
+      console.log(`[brain] 恢复任务「${saved.goal}」（已带 ${saved.trace.length} 步历史）`)
+      return buildResumeContext(saved)
+    },
+    prompt: async (input) => {
+      responseBuffer = ""
+      try {
+        await promptAgent(input, true)
+        finishRun(getRun().finishVerified ? "success" : "closed")
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        console.log(`[brain] 续跑失败：${message}`)
+        finishRun(isStopRequested() ? "stopped" : "crashed", isStopRequested() ? "用户停止" : message)
+        if (!isStopRequested()) reflectFailure(message)
+      }
+    },
+    onUnavailable: async () => {
+      console.log("[brain] 没有可恢复的任务（无历史、未暂停或上次已结束）")
+      await reportResumeTerminal("failed", "没有可恢复的任务")
+    },
+    onStopped: async () => {
+      console.log("[brain] 恢复请求已被停止请求取消")
+      await reportResumeTerminal("aborted", "用户已停止")
+    },
+  })
 
   const eventPump = async (): Promise<void> => {
     let lastEventSeq = 0
@@ -364,9 +416,10 @@ async function main(): Promise<void> {
                 process.stdout.write("\n\n")
                 finishRun(getRun().finishVerified ? "success" : "closed")
               } catch (err) {
-                console.log(`[brain] 任务失败：${err instanceof Error ? err.message : String(err)}`)
-                finishRun("crashed", err instanceof Error ? err.message : String(err))
-                reflectFailure(err instanceof Error ? err.message : String(err))
+                const message = err instanceof Error ? err.message : String(err)
+                console.log(`[brain] 任务失败：${message}`)
+                finishRun(isStopRequested() ? "stopped" : "crashed", isStopRequested() ? "用户停止" : message)
+                if (!isStopRequested()) reflectFailure(message)
               }
             })
           }
@@ -377,32 +430,19 @@ async function main(): Promise<void> {
           requestStop()
           try { agent.abort() } catch { /* agent 可能已完成 */ }
           console.log("[brain] 收到用户停止请求，已 abort 当前运行")
+          // PAUSED has no live prompt producer to publish finish. The queued
+          // settlement shares the same atomic checkpoint stop path as resume
+          // cancellation; active prompts win the race by terminalizing first.
+          void enqueueTask(() => finishStoppedCheckpoint(
+            () => stopPersistedRun("用户停止"),
+            async () => { await reportStoppedAfterPause("用户已停止") },
+          ).then(() => undefined))
         } else if (kind === "pause_request") {
           // I3：暂停——阻断下一动作（beforeToolCall 检查 isPaused），当前动作完成自然停
           requestPause()
           console.log("[brain] 收到暂停请求，下一动作将等待恢复")
         } else if (kind === "resume_request") {
-          resumeFromPause()
-          // C-06 闭环：resume = 断点续跑——paused 终态的 run 经 buildResumeContext 重新 prompt
-          // （docs/16 §6 目标语义；TC-14 机制复用不新造状态。无可续 run 时诚实提示不假恢复）
-          if (hasResumableRun()) {
-            console.log("[brain] 收到恢复请求，自动续跑上次任务")
-            void enqueueTask(async () => {
-              const saved = resumeRun()
-              if (!saved) return
-              resetSensitiveSession()
-              try {
-                console.log(`[brain] 恢复任务「${saved.goal}」（已带 ${saved.trace.length} 步历史）`)
-                await promptAgent(buildResumeContext(saved))
-                finishRun(getRun().finishVerified ? "success" : "closed")
-              } catch (err) {
-                console.log(`[brain] 续跑失败：${err instanceof Error ? err.message : String(err)}`)
-                finishRun("crashed", err instanceof Error ? err.message : String(err))
-              }
-            })
-          } else {
-            console.log("[brain] 收到恢复请求（无可续任务——仅解除暂停标志）")
-          }
+          void resumeCoordinator.request("automatic")
         } else if (kind === "barge_in") {
           // #33（G1-08）：打断播报 = 用户要说话——语音模式立即开新一轮收听；文字模式仅记日志
           if (VOICE_MODE) {
@@ -423,7 +463,7 @@ async function main(): Promise<void> {
     console.log("\n[brain] 语音模式就绪。按躯体通知栏按钮触发对话。\n")
     await new Promise<never>(() => undefined) // 语音模式主协程仅保活，事件全由泵消费
   } else {
-    await runRepl(promptAgent, enqueueTask, reflectFailure)
+    await runRepl(promptAgent, enqueueTask, reflectFailure, (mode) => resumeCoordinator.request(mode))
   }
 }
 
@@ -431,6 +471,7 @@ async function runRepl(
   prompt: (input: string) => Promise<void>,
   enqueueTask: (run: () => Promise<void>) => Promise<void>,
   reflectFailure: (error: string) => void,
+  requestResume: (mode: "manual") => Promise<ResumeResult>,
 ): Promise<void> {
   const rl = createInterface({ input: stdin, output: stdout })
   console.log("\n[brain] 就绪。输入任务（如「帮我点一杯奶茶」），Ctrl+C 退出。\n")
@@ -446,30 +487,7 @@ async function runRepl(
     if (input === "exit" || input === "quit") break
     // TC-14：「继续」恢复上次中断任务（success 终态不可续）；新任务输入 = 放弃旧任务
     if (input === "继续" || input.toLowerCase() === "continue") {
-      if (!hasResumableRun()) {
-        console.log("[brain] 没有可恢复的任务（无历史或上次已成功）")
-        continue
-      }
-      const saved = resumeRun()
-      if (saved) {
-        resetSensitiveSession()
-        // codex-P0-04：REPL 任务也进串行链——与事件泵任务（text_input/语音轮次）互斥
-        await enqueueTask(async () => {
-          console.log(`\n[brain] 恢复任务「${saved.goal}」，已带 ${saved.trace.length} 步历史`)
-          console.log("助手> ")
-          responseBuffer = ""
-          try {
-            await prompt(buildResumeContext(saved))
-            process.stdout.write("\n\n")
-            finishRun(getRun().finishVerified ? "success" : "closed")
-          } catch (err) {
-            process.stdout.write("\n")
-            console.log(`[brain] 任务失败：${err instanceof Error ? err.message : String(err)}`)
-            finishRun("crashed", err instanceof Error ? err.message : String(err))
-            reflectFailure(err instanceof Error ? err.message : String(err))
-          }
-        })
-      }
+      await requestResume("manual")
       continue
     }
     // codex-P0-04：REPL 任务也进串行链（与恢复分支同构）
@@ -484,9 +502,10 @@ async function runRepl(
         finishRun(getRun().finishVerified ? "success" : "closed")
       } catch (err) {
         process.stdout.write("\n")
-        console.log(`[brain] 任务失败：${err instanceof Error ? err.message : String(err)}`)
-        finishRun("crashed", err instanceof Error ? err.message : String(err))
-        reflectFailure(err instanceof Error ? err.message : String(err))
+        const message = err instanceof Error ? err.message : String(err)
+        console.log(`[brain] 任务失败：${message}`)
+        finishRun(isStopRequested() ? "stopped" : "crashed", isStopRequested() ? "用户停止" : message)
+        if (!isStopRequested()) reflectFailure(message)
       }
     })
   }
@@ -510,9 +529,10 @@ async function voiceTurn(body: BodyClient, prompt: (input: string) => Promise<vo
     finishRun(getRun().finishVerified ? "success" : "closed")
     console.log("\n---")
   } catch (err) {
-    console.log(`[brain] 语音轮次失败：${err instanceof Error ? err.message : String(err)}`)
-    finishRun("crashed", err instanceof Error ? err.message : String(err))
-    reflectFailure(err instanceof Error ? err.message : String(err))
+    const message = err instanceof Error ? err.message : String(err)
+    console.log(`[brain] 语音轮次失败：${message}`)
+    finishRun(isStopRequested() ? "stopped" : "crashed", isStopRequested() ? "用户停止" : message)
+    if (!isStopRequested()) reflectFailure(message)
   }
 }
 

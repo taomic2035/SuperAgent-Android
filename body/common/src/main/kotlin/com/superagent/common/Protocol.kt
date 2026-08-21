@@ -1,6 +1,7 @@
 package com.superagent.common
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerialName
 
 @Serializable
 data class RpcRequest(
@@ -107,7 +108,20 @@ data class ScreenResult(
     val sensitiveSession: Boolean = false,
     /** 视觉感知（L1）截图引用：GET /blob/{ref} 取 JPEG，brain 侧送 VLM 识别 marks */
     val screenshotRef: String? = null,
+    val screenWidth: Int? = null,
+    val screenHeight: Int? = null,
+    val screenshotWidth: Int? = null,
+    val screenshotHeight: Int? = null,
+    val visionFallback: VisionFallback? = null,
 )
+
+@Serializable
+enum class VisionFallback {
+    @SerialName("provider_unavailable") PROVIDER_UNAVAILABLE,
+    @SerialName("invalid_output") INVALID_OUTPUT,
+    @SerialName("invalid_coordinates") INVALID_COORDINATES,
+    @SerialName("missing_dimensions") MISSING_DIMENSIONS,
+}
 
 @Serializable
 data class AsrResult(
@@ -282,7 +296,7 @@ data class MemoryMaintainResult(
 data class RunRecord(
     val id: Long,
     val goal: String,
-    /** success | failed | crashed | needs_human | closed（RunOutcome 枚举） */
+    /** success | failed | crashed | needs_human | closed | paused | stopped（RunOutcome 枚举） */
     val outcome: String,
     val failureReason: String? = null,
     val trace: List<TraceStep> = emptyList(),

@@ -6,24 +6,24 @@
 
 [![status](https://img.shields.io/badge/status-v0.1.0%20post--release%20audit-orange)]()
 [![license](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
-[![tests](https://img.shields.io/badge/tests-brain43%20%7C%20body168-brightgreen)]()
+[![tests](https://img.shields.io/badge/tests-brain55%20%7C%20body117-brightgreen)]()
 [![protocol](https://img.shields.io/badge/IPC-v2-orange)](docs/07-接口规格说明书.md)
 
 ---
 
 ## 当前状态（2026-08-21）
 
-`v0.1.0` 已打标签；当前 `main` 比标签多 8 个安全/记忆提交，处于 post-release 审计与 P1 整改阶段。历史 P0 真机闭环有效，但本轮代码审计发现视觉、终态、暂停和安全内层旁路，状态按当前事实重新标注：
+`v0.1.0` 已打标签；当前 `main` 处于 post-release 审计与 P1 整改阶段。历史 P0 真机闭环有效；本轮已收口安全内层旁路、视觉失败真实性与暂停恢复竞态，真机视觉标定和其余 P1 项仍按下表管理：
 
 | 里程碑 | 状态 | 说明 |
 |---|---|---|
 | M0 安全绿 | ✅ | Token 鉴权 + 协议版本 + 错误码全量 |
-| M1 红线绿 | ◐ | 主安全链成立；selectOption 最终内部坐标闸待补（docs/16 C-01） |
+| M1 红线绿 | ✅ | selector 最终坐标与普通 tap 共用 typed ActionGate；提交边界仍由 Body 权威拦截 |
 | M2 闭环绿 | ✅ | 真机端到端：文字指令→规划→操控→证据核验→技能固化 |
 | M3 飞轮绿 | ✅ | 技能回放（签名步进校验）+ 状态机（candidate→verified） |
-| G5 交互绿 | ◐ | 悬浮 UI 可用；暂停/继续与离线输入协议未闭环 |
+| G5 交互绿 | ✅ | 暂停→持久化→单次恢复、停止不可复活；离线输入在 EventBus 前明确拒绝 |
 | M4 语音绿 | ◐ | ASR 与在线播报有真机证据；本地 sherpa TTS 当前禁用，系统 TTS 兜底 |
-| M5 工程绿 | ◐ | 本轮 brain 25 smoke+6 integration、body 81 JVM 与 Debug APK 构建全绿；真机未复验 |
+| M5 工程绿 | ◐ | 本轮 brain 55 个行为组、body 117 JVM 与 Debug APK 构建全绿；真机未复验 |
 | ME 记忆 | ◐ | SQLite、反思、归档、备份已实现；注入覆盖/重复归档/快照治理待修 |
 
 审计详情见 [docs/16](docs/16-当前架构代码审计-2026-08-21.md)，整改后的当前方案见 [docs/17](docs/17-当前方案设计.md)。
@@ -35,7 +35,7 @@ flowchart LR
     C --> A[Android 应用与系统]
     A -->|界面 / 状态 / 结果| C
     C -->|结构树 / 截图 / 事件| B
-    B -.仅规划侧出网.-> M[GLM 主模型]
+    B -.仅规划/视觉侧出网.-> M[可配置 OpenAI 兼容模型<br/>主模型与视觉模型可独立选择]
     C -->|提交边界确认| U
 ```
 
@@ -81,9 +81,9 @@ flowchart TB
 | 云模型 | 生成计划与工具参数 | 持有设备执行权、端侧数据权威 |
 | 用户 | 授权高风险动作、随时暂停或终止 | 为普通低风险步骤逐项确认 |
 
-**安全铁律**：大脑只“想”，躯体才“做”。`ActionExecutor`、`ActionGate`、敏感会话和 HITL nonce 主链已经落地；当前仍有 selector 内部最终 tap 未过坐标闸的审计缺口，修复前不宣称所有路径绝对不可绕过。
+**安全铁律**：大脑只“想”，躯体才“做”。`ActionExecutor`、`ActionGate`、敏感会话和 HITL nonce 主链已经落地；selector 内部最终坐标也复用同一 typed gate。
 
-**感知阶梯**：L0 a11y 已实现；L1 screenshot/blob/VLM 与 L2 auto 骨架存在，但 MediaProjection 授权 attach 和 WebView 信号路由待修，当前标记为部分完成。
+**感知阶梯**：L0 a11y、L1 screenshot/blob/VLM 与 L2 auto 路由已接通。视觉 provider、输出或坐标无效时不会伪装成功，而是返回 typed reason + fresh a11y；屏幕旋转/resize 在取帧前后 fail-closed。真机坐标标定仍待设备验收。
 
 ### 一次任务如何闭环
 
@@ -119,7 +119,7 @@ sequenceDiagram
 | Android 真机 | Android 8.0+（API 24）、arm64-v8a | 运行躯体、无障碍和端侧模型 |
 | Android 工具链 | SDK compileSdk 35、JDK 17+ | 构建与安装 APK |
 | Node.js | 20+ | 运行 Termux 大脑与验证脚本 |
-| GLM API Key | [智谱开放平台](https://open.bigmodel.cn/) | 当前云端规划模型 |
+| OpenAI 兼容 API 凭据 | 你选择的云端 provider | 主规划与视觉可分别配置 |
 
 ### 获取模型
 
@@ -131,7 +131,7 @@ bash scripts/fetch-models.sh   # 下载 sherpa-onnx .so + ASR/TTS/声纹模型�
 
 ```bash
 cd body
-./gradlew :common:test :core:testDebugUnitTest   # 当前 168 项 JVM 单测
+./gradlew :common:test :core:testDebugUnitTest   # 当前 117 项 JVM 单测
 ./gradlew :app:assembleDebug                     # Debug APK 当前约 1.01GB
 bash scripts/install.sh                          # 装机 + token 桥接
 ```
@@ -149,7 +149,36 @@ adb forward tcp:8765 tcp:8765    # PC 直连真机
 BODY_URL=http://127.0.0.1:8765 BODY_TOKEN=$(adb shell run-as com.superagent.body cat files/token | tr -d '\r\n') npm run start
 ```
 
-不接 PC 可使用悬浮球和文字输入；暂停/继续仍处于协议整改期，不应作为稳定能力验收。
+`GLM_*` 是现有主模型兼容变量名，不代表业务代码绑定某个厂商；主模型同样通过 OpenAI 兼容地址与模型 ID 选择：
+
+| 配置 | 作用 | 说明 |
+|---|---|---|
+| `GLM_BASE_URL` | 主 provider 的 OpenAI 兼容地址 | 历史变量名，地址可替换 |
+| `GLM_API_KEY` | 主 provider 鉴权 | 只从环境读取 |
+| `MODEL` | 主规划模型 ID | 不应在业务分支判断具体型号 |
+| `BACKUP_LLM_URL/BACKUP_MODEL` | 备用云端层 | 与主 provider 独立 |
+| `LOCAL_LLM_URL/LOCAL_MODEL` | 本地只读闲聊层 | 不授予设备工具 |
+
+视觉路由可独立选择 provider：
+
+| 配置 | 作用 | 缺省语义 |
+|---|---|---|
+| `VISION_BASE_URL` | 视觉 provider 的 OpenAI 兼容地址 | 不注册独立视觉 provider |
+| `VISION_API_KEY` | 视觉 provider 鉴权，只从环境读取 | 允许内网免鉴权端点 |
+| `VISION_MODEL` | 视觉模型 ID | 未配置时跟随当前主模型 |
+| `VISION` | 视觉能力开关 | `1` |
+
+当前部署示例（型号只是配置值，可替换）：
+
+```bash
+export VISION_BASE_URL=https://your-openai-compatible-endpoint/v1
+export VISION_API_KEY=your-vision-key
+export VISION_MODEL=qwen3.7-plus
+```
+
+不得把凭据写入 README、`SESSION.md` 或源码；建议放入权限受限的本机环境文件。修改 `VISION_*` 不会改变主规划模型、Body 安全门禁或设备执行权。
+
+不接 PC 可使用悬浮球和文字输入。暂停只在动作边界落盘，继续只领取一次 settled paused checkpoint；stop 会把 checkpoint 写成不可续终态。
 
 ## 验证流水线
 
@@ -157,15 +186,17 @@ BODY_URL=http://127.0.0.1:8765 BODY_TOKEN=$(adb shell run-as com.superagent.body
 |---|---|---|
 | brain 类型 | `npm run typecheck` | 通过 |
 | IPC 契约 | `npm run contract` | 34 个共享类型一致 |
-| brain 行为 | `npm run smoke` | 25 项通过 |
+| brain 行为 | `npm run smoke` | 26 项通过 |
 | brain 集成 | `npm run integration` | 6 项通过 |
-| body JVM | `:common:test :core:testDebugUnitTest` | 168 项通过 |
+| 恢复竞态 | `npm run resume-coordinator` | 15 项通过：single-flight、stop 优先、paused→stopped |
+| 视觉降级 | `npm run vision-fallback` | 8 项通过：typed fallback、坐标与尺寸校验 |
+| body JVM | `:common:test :core:testDebugUnitTest` | 117 项通过 |
 | APK 构建 | `:app:assembleDebug` | 本轮通过 |
 | 真机 | 装机验收 | 本轮尚未复验 |
 
 ```bash
 # brain
-cd brain && npm run typecheck && npm run contract && npm run smoke && npm run integration
+cd brain && npm run typecheck && npm run contract && npm run smoke && npm run integration && npm run resume-coordinator && npm run vision-fallback
 
 # body
 cd body && ./gradlew :common:test :core:testDebugUnitTest :app:assembleDebug
@@ -205,7 +236,7 @@ super-agent/
 │  ├─ tools/         # 感知/操控/语音/技能/记忆/HITL/finish 工具
 │  ├─ guards/        # ReAct 止损 + 证据闸门 + 脱敏 + 相关性 + VLM
 │  ├─ personas/      # 角色系统 + 系统提示
-│  └─ model.ts       # GLM 主/备用/本地三档降级链
+│  └─ model.ts       # 可配置主/备用/本地三档降级链 + 独立视觉 provider
 ├─ body/
 │  ├─ common/        # 纯 JVM：协议契约 + 词表守卫 + 技能索引
 │  ├─ core/          # Android：RPC/感知/操控/语音/HITL/技能/悬浮UI/截图
@@ -221,13 +252,13 @@ super-agent/
 |---|---|
 | **语音输入** | SenseVoice 端侧 ASR（16kHz，静音断句） |
 | **语音输出** | 在线 edge/azure 合成 → body 内存播放；失败时系统 TTS，sherpa 本地路径待恢复 |
-| **屏幕感知** | a11y ✅；截图/VLM/auto ◐（授权与 WebView 路由待修） |
+| **屏幕感知** | a11y + 截图/VLM/auto；typed fallback、真实尺寸换算与旋转 fail-closed |
 | **操控** | tap/swipe/type/select/back/home/launch；主路径走 ActionExecutor，内部 selector 闸待补 |
 | **安全** | 提交边界词表 + 坐标全节点校验 + 敏感会话 + HITL nonce 一次性消费 |
 | **技能** | learn（轨迹固化）→ run（签名步进校验回放）→ feedback（candidate→verified→active） |
 | **守卫** | ReAct 止损（5 类退化+豁免通道）+ 证据闸门（存在性+新颖性+相关性）+ 脱敏 |
 | **记忆** | SQLite 记忆、成功/失败反思、run 归档、Termux 快照恢复（治理待加强） |
-| **交互** | 悬浮球+状态条+输入面板+OFFLINE 心跳；暂停/继续 ◐ |
+| **交互** | 悬浮球+状态条+输入面板+OFFLINE 心跳；竞态安全的暂停/继续/停止 |
 
 ## 路线图
 

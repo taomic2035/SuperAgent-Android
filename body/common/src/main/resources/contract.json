@@ -91,7 +91,12 @@
         "pageTexts",
         "appPackage",
         "sensitiveSession",
-        "screenshotRef"
+        "screenshotRef",
+        "screenWidth",
+        "screenHeight",
+        "screenshotWidth",
+        "screenshotHeight",
+        "visionFallback"
       ]
     },
     "AsrResult": {
