@@ -13,8 +13,8 @@ import { beginRun, hasResumableRun, resumeRun, finishRun, peekRun, buildResumeCo
 import { env } from "./env.ts"
 import { speak } from "./tts/index.ts"
 import { initBrainEvents, reportPromptStart, reportFinish, isStopRequested, clearStop, requestStop, requestPause, resumeFromPause } from "./ipc/brainEventReporter.ts"
-import { buildReflector } from "./memory/reflect.ts"
-import type { Reflector } from "./memory/reflect.ts"
+import { buildReflector, buildFailureReflector } from "./memory/reflect.ts"
+import type { FailureReflector, Reflector } from "./memory/reflect.ts"
 import type { AsrResult, BodyEvent, MemorySearchResult, SkillListResult } from "./ipc/types.ts"
 
 const BODY_URL = env("BODY_URL", "http://127.0.0.1:8765")
@@ -81,6 +81,7 @@ async function main(): Promise<void> {
   let relevance: ReturnType<typeof buildLlmRelevanceCheck> | undefined
   let vision: ReturnType<typeof buildLlmVisionMarks> | undefined
   let reflector: Reflector | undefined
+  let failureReflector: FailureReflector | undefined
   function rebuildSidecars(tier: "primary" | "backup" | "local") {
     relevance =
       env("EVIDENCE_RELEVANCE", "1") === "1" && tier !== "local"
@@ -90,11 +91,26 @@ async function main(): Promise<void> {
       env("VISION", "1") === "1" && tier === "primary" && !localOnly
         ? buildLlmVisionMarks(models, resolved.model)
         : undefined
-    // ME-2 reflect 跟随模型链（与 relevance 同防降级脑裂）：local 闲聊不提取，ME_REFLECT=0 可关
+    // ME-2/ME-5 reflect 家族跟随模型链（与 relevance 同防降级脑裂）：local 闲聊不提取，ME_REFLECT=0 可关
     reflector =
       env("ME_REFLECT", "1") === "1" && tier !== "local"
         ? buildReflector(models, tier === "primary" ? resolved.model : resolved.backupModel!!, body)
         : undefined
+    failureReflector =
+      env("ME_REFLECT", "1") === "1" && tier !== "local"
+        ? buildFailureReflector(models, tier === "primary" ? resolved.model : resolved.backupModel!!, body)
+        : undefined
+  }
+
+  /** ME-5 失败反思（docs/15 §8.1）：failed/crashed 终态后异步归因（aborted 用户主动停不反思） */
+  const reflectFailure = (error: string): void => {
+    if (!failureReflector) return
+    try {
+      const run = getRun()
+      void failureReflector({ goal: run.goal, error, tools: run.trace.map((s) => s.tool) })
+    } catch {
+      /* run 未初始化等：跳过 */
+    }
   }
   rebuildSidecars(modelTier)
 
@@ -282,12 +298,13 @@ async function main(): Promise<void> {
               } catch (err) {
                 console.log(`[brain] 任务失败：${err instanceof Error ? err.message : String(err)}`)
                 finishRun("crashed", err instanceof Error ? err.message : String(err))
+                reflectFailure(err instanceof Error ? err.message : String(err))
               }
             })
           }
         } else if (kind === "trigger") {
           // codex-P0-03：语音触发统一由常驻泵消费（原 runVoiceLoop 双循环与泵互抢事件）
-          void enqueueTask(() => voiceTurn(body, promptAgent))
+          void enqueueTask(() => voiceTurn(body, promptAgent, reflectFailure))
         } else if (kind === "stop_request") {
           requestStop()
           try { agent.abort() } catch { /* agent 可能已完成 */ }
@@ -313,11 +330,15 @@ async function main(): Promise<void> {
     console.log("\n[brain] 语音模式就绪。按躯体通知栏按钮触发对话。\n")
     await new Promise<never>(() => undefined) // 语音模式主协程仅保活，事件全由泵消费
   } else {
-    await runRepl(promptAgent, enqueueTask)
+    await runRepl(promptAgent, enqueueTask, reflectFailure)
   }
 }
 
-async function runRepl(prompt: (input: string) => Promise<void>, enqueueTask: (run: () => Promise<void>) => Promise<void>): Promise<void> {
+async function runRepl(
+  prompt: (input: string) => Promise<void>,
+  enqueueTask: (run: () => Promise<void>) => Promise<void>,
+  reflectFailure: (error: string) => void,
+): Promise<void> {
   const rl = createInterface({ input: stdin, output: stdout })
   console.log("\n[brain] 就绪。输入任务（如「帮我点一杯奶茶」），Ctrl+C 退出。\n")
   for (;;) {
@@ -352,6 +373,7 @@ async function runRepl(prompt: (input: string) => Promise<void>, enqueueTask: (r
             process.stdout.write("\n")
             console.log(`[brain] 任务失败：${err instanceof Error ? err.message : String(err)}`)
             finishRun("crashed", err instanceof Error ? err.message : String(err))
+            reflectFailure(err instanceof Error ? err.message : String(err))
           }
         })
       }
@@ -371,13 +393,14 @@ async function runRepl(prompt: (input: string) => Promise<void>, enqueueTask: (r
         process.stdout.write("\n")
         console.log(`[brain] 任务失败：${err instanceof Error ? err.message : String(err)}`)
         finishRun("crashed", err instanceof Error ? err.message : String(err))
+        reflectFailure(err instanceof Error ? err.message : String(err))
       }
     })
   }
   rl.close()
 }
 
-async function voiceTurn(body: BodyClient, prompt: (input: string) => Promise<void>): Promise<void> {
+async function voiceTurn(body: BodyClient, prompt: (input: string) => Promise<void>, reflectFailure: (error: string) => void): Promise<void> {
   try {
     const asr = await body.rpc<AsrResult>("speech.asr", {}, undefined, 75_000)
     if (!asr.text.trim()) return
@@ -396,6 +419,7 @@ async function voiceTurn(body: BodyClient, prompt: (input: string) => Promise<vo
   } catch (err) {
     console.log(`[brain] 语音轮次失败：${err instanceof Error ? err.message : String(err)}`)
     finishRun("crashed", err instanceof Error ? err.message : String(err))
+    reflectFailure(err instanceof Error ? err.message : String(err))
   }
 }
 

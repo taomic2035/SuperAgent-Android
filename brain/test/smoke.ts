@@ -16,7 +16,7 @@ import type { AfterToolCallContext } from "@earendil-works/pi-agent-core"
 import { beginRun, addTrace, finishRun, hasResumableRun, resumeRun, resetRun, buildResumeContext, peekRun, getRun } from "../src/runState.ts"
 import type { RunState } from "../src/runState.ts"
 import { buildTools } from "../src/tools/index.ts"
-import { parseCandidates } from "../src/memory/reflect.ts"
+import { parseCandidates, parseFailureLessons } from "../src/memory/reflect.ts"
 import { loadPersonas } from "../src/personas/personas.ts"
 import type { MemorySearchResult, MemoryWriteResult, ScreenResult } from "../src/ipc/types.ts"
 
@@ -310,6 +310,20 @@ async function main(): Promise<void> {
       assert.equal(parseCandidates('前缀 [{"kind":"diary","topic":"t","content":"c"}] 后缀').length, 0, "非法 kind 条目丢弃")
       assert.equal(parseCandidates('说明 [{"kind":"fact","topic":"t","content":"c"},{"kind":"lesson"}]').length, 1, "缺字段条目丢弃")
       ok("reflect parseCandidates 容错解析")
+
+      // ME-5 失败教训解析：强制 kind=lesson 且至多 1 条（宁缺毋滥防灌水）
+      assert.equal(
+        parseFailureLessons('归因：[{"kind":"preference","topic":"奶茶口味","content":"少糖"},{"kind":"lesson","topic":"滑块","content":"改走系统设置"}]').length,
+        1,
+        "非 lesson 条目丢弃",
+      )
+      assert.equal(
+        parseFailureLessons('[{"kind":"lesson","topic":"a","content":"x"},{"kind":"lesson","topic":"b","content":"y"}]').length,
+        1,
+        "至多 1 条",
+      )
+      assert.equal(parseFailureLessons("网络抖动，[]").length, 0)
+      ok("parseFailureLessons 强制 lesson + 单条上限")
 
       // reflect 触发：task.finish 证据核验通过后 fire-and-forget（对齐 mock 4 屏轮换消除步数不确定性）
       const reflectCalls: Array<{ goal: string; summary: string; tools: string[] }> = []

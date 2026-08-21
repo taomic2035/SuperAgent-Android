@@ -90,3 +90,61 @@ export function parseCandidates(raw: string): MemoryCandidate[] {
       content: String(c.content).trim().slice(0, 200),
     }))
 }
+
+/**
+ * ME-5 失败反思（docs/15 §8.1）：failed/crashed run 的 LLM 归因——
+ * 提取 0-1 条 lesson（为什么失败、下次怎么避开），补全"lessons learned"的失败半边。
+ * aborted（用户主动停）/closed（对话收笔）不反思；fire-and-forget 不阻塞失败路径。
+ */
+
+export interface FailureReflectInput {
+  goal: string
+  error: string
+  tools: string[]
+}
+
+export type FailureReflector = (input: FailureReflectInput) => Promise<void>
+
+const FAILURE_REFLECT_SYSTEM_PROMPT =
+  "你是失败任务归因器。分析刚失败的手机任务，提取一条值得长期记住的教训" +
+  "（如「美团下单会遇滑块，改走系统设置验证」「X App 的搜索框 a11y 不可见，需 vision 模式」）。" +
+  '只输出 JSON 数组（0-1 条，无可提取或失败原因不明输出 []），形如 [{"kind":"lesson","topic":"归并键（≤12字）","content":"失败原因与规避方法（≤60字）"}]。' +
+  "只记可复用的稳定教训，不记偶发网络抖动类噪声；不含个人敏感信息。"
+
+export function buildFailureReflector(models: MutableModels, model: Model<"openai-completions">, body: BodyClient): FailureReflector {
+  return async (input) => {
+    try {
+      let out = ""
+      const judge = new Agent({
+        initialState: { systemPrompt: FAILURE_REFLECT_SYSTEM_PROMPT, model, tools: [] },
+        streamFn: models.streamSimple.bind(models),
+      })
+      judge.subscribe((event) => {
+        if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
+          out += event.assistantMessageEvent.delta
+        }
+      })
+      await judge.prompt(
+        `任务目标：${input.goal}\n失败原因：${input.error}\n工具序列：${input.tools.slice(0, 30).join(" → ")}`,
+      )
+      for (const c of parseFailureLessons(out)) {
+        if (redactText(c.content) !== c.content || redactText(c.topic) !== c.topic) continue
+        await body.rpc("memory.write", {
+          kind: "lesson",
+          topic: c.topic,
+          content: c.content,
+          source: `run-fail:${input.goal.slice(0, 24)}`,
+        })
+      }
+    } catch (err) {
+      console.warn(`[brain] 失败反思提取失败（不影响任务）：${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+}
+
+/** 失败教训解析：复用 parseCandidates 后强制 kind=lesson 且至多 1 条（宁缺毋滥，防灌水）。导出供单测。 */
+export function parseFailureLessons(raw: string): MemoryCandidate[] {
+  return parseCandidates(raw)
+    .filter((c) => c.kind === "lesson")
+    .slice(0, 1)
+}
