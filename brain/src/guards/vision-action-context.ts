@@ -19,11 +19,12 @@ export class VisionActionProvenance {
   }
 
   attach<T extends Record<string, unknown>>(params: T, runKey: number): T & { visionActionToken?: string } {
+    const { visionActionToken: _untrustedToken, ...safeParams } = params
     if (!this.observed || this.observed.runKey !== runKey) {
       this.clear()
-      return { ...params }
+      return safeParams as T
     }
-    return { ...params, visionActionToken: this.observed.token }
+    return { ...safeParams, visionActionToken: this.observed.token } as T & { visionActionToken: string }
   }
 
   clear(): void {

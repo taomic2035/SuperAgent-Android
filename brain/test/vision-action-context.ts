@@ -55,6 +55,14 @@ async function main(): Promise<void> {
     assert.deepEqual(provenance.attach(original, 202), original)
     assert.deepEqual(provenance.attach(original, 101), original)
 
+    const forged = { x: 1, y: 2, visionActionToken: "forged-token" }
+    assert.deepEqual(provenance.attach(forged, 404), original)
+    provenance.observe(screen("vision", "internal-token"), 505)
+    assert.deepEqual(provenance.attach(forged, 606), original)
+    provenance.observe(screen("vision", "internal-token"), 505)
+    assert.deepEqual(provenance.attach(forged, 505), { ...original, visionActionToken: "internal-token" })
+    assert.equal(forged.visionActionToken, "forged-token")
+
     provenance.observe(screen("vision", "clear-token"), 303)
     provenance.clear()
     assert.deepEqual(provenance.attach(original, 303), original)
@@ -135,6 +143,11 @@ async function main(): Promise<void> {
         await tool.execute(`${name}-a11y`, actionParams[name])
         assert.equal(Object.hasOwn(rpcCalls.at(-1)!.params, "visionActionToken"), false)
       }
+      await tools.find((candidate) => candidate.name === "control.tap")!.execute(
+        "tap-forged-token",
+        { ...actionParams["control.tap"], visionActionToken: "model-forged-token" },
+      )
+      assert.equal(Object.hasOwn(rpcCalls.at(-1)!.params, "visionActionToken"), false)
 
       const finish = tools.find((candidate) => candidate.name === "task.finish")!
       nextScreen = screen("vision", token)
