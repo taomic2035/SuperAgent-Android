@@ -1,5 +1,6 @@
 package com.superagent.body.core.vision
 
+import android.os.SystemClock
 import android.util.Base64
 import java.security.SecureRandom
 import java.util.concurrent.ConcurrentHashMap
@@ -17,9 +18,10 @@ internal fun createVisionActionToken(
 }
 
 class VisionActionContextRegistry(
-    private val nowMs: () -> Long = System::currentTimeMillis,
+    private val nowMs: () -> Long = SystemClock::elapsedRealtime,
     private val tokenFactory: () -> String = DEFAULT_TOKEN_FACTORY,
     private val ttlMs: Long = DEFAULT_TTL_MS,
+    private val maxEntries: Int = DEFAULT_MAX_ENTRIES,
 ) {
     private data class Entry(
         val screenshotRef: String,
@@ -28,12 +30,15 @@ class VisionActionContextRegistry(
         val screenWidth: Int,
         val screenHeight: Int,
         val expiresAt: Long,
+        val issuedOrder: Long,
     )
 
     enum class Validation { Valid, Invalid }
 
     private val entries = ConcurrentHashMap<String, Entry>()
+    private var nextIssuedOrder = 0L
 
+    @Synchronized
     fun issue(
         ref: String,
         pkg: String,
@@ -41,8 +46,11 @@ class VisionActionContextRegistry(
         width: Int,
         height: Int,
     ): String {
+        val now = nowMs()
+        removeExpired(now)
         val token = tokenFactory()
-        entries[token] = Entry(ref, pkg, signature, width, height, nowMs() + ttlMs)
+        entries[token] = Entry(ref, pkg, signature, width, height, now + ttlMs, nextIssuedOrder++)
+        trimToMaxEntries()
         return token
     }
 
@@ -52,13 +60,32 @@ class VisionActionContextRegistry(
             entries.remove(token, entry)
             return Validation.Invalid
         }
-        val signatureMatches =
-            entry.signature.isBlank() || currentSignature.isBlank() || entry.signature == currentSignature
+        val signatureMatches = entry.signature == currentSignature
         return if (currentPackage == entry.appPackage && signatureMatches) Validation.Valid else Validation.Invalid
+    }
+
+    internal fun sizeForTest(): Int = entries.size
+
+    private fun removeExpired(now: Long) {
+        entries.forEach { (token, entry) ->
+            if (now > entry.expiresAt) entries.remove(token, entry)
+        }
+    }
+
+    private fun trimToMaxEntries() {
+        while (entries.size > maxEntries) {
+            val oldest = entries.entries.minWithOrNull(
+                compareBy<Map.Entry<String, Entry>> { it.value.expiresAt }
+                    .thenBy { it.value.issuedOrder }
+                    .thenBy { it.key },
+            ) ?: return
+            entries.remove(oldest.key, oldest.value)
+        }
     }
 
     private companion object {
         const val DEFAULT_TTL_MS = 120_000L
+        const val DEFAULT_MAX_ENTRIES = 128
         val DEFAULT_TOKEN_FACTORY: () -> String = { createVisionActionToken() }
     }
 }
