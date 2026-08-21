@@ -241,6 +241,8 @@ class MemoryStore(private val db: MemoryDb) {
     fun revise(id: Long, content: String, source: String? = null): Boolean {
         val c = content.trim()
         require(c.isNotEmpty()) { "content 不能为空" }
+        // C-09（docs/16 §7）：修订路径 PII 红线与 write/import 同源——此前唯一未设防入口
+        require(!containsPii(c)) { "内容含疑似身份证/银行卡号，拒绝入库（隐私红线）" }
         val m = db.findById(id) ?: return false
         db.update(
             m.copy(

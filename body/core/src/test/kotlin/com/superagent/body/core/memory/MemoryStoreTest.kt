@@ -72,6 +72,15 @@ class MemoryStoreTest {
     }
 
     @Test
+    fun `C-09 revise 路径同样拒绝 PII`() {
+        val r = store.write("preference", "奶茶口味", "少糖", "user-told")
+        assertThrows<IllegalArgumentException> {
+            store.revise(r.id, "改成 6222020200112233345")
+        }
+        assertEquals("少糖", db.active().first().content, "修订被拒后原内容不变")
+    }
+
+    @Test
     fun `G2-01 正常短数字内容不误伤`() {
         val r = store.write("preference", "音量", "播报音量 30", "user-told")
         assertFalse(r.merged)
