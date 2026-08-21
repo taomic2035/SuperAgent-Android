@@ -1,10 +1,11 @@
 import assert from "node:assert/strict"
 import { mkdtemp } from "node:fs/promises"
-import { readFileSync } from "node:fs"
+import { readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { startMockBody } from "./mock-body.ts"
 import { BodyClient, BodyRpcError, BodyUnavailableError } from "../src/ipc/client.ts"
+import { backupNow } from "../src/memory/backup.ts"
 import { verifyEvidence } from "../src/guards/finish.ts"
 import { redactText, redactScreen } from "../src/guards/redact.ts"
 import { resolveModel } from "../src/model.ts"
@@ -18,7 +19,7 @@ import type { RunState } from "../src/runState.ts"
 import { buildTools } from "../src/tools/index.ts"
 import { parseCandidates, parseFailureLessons } from "../src/memory/reflect.ts"
 import { loadPersonas } from "../src/personas/personas.ts"
-import type { MemorySearchResult, MemoryWriteResult, ScreenResult } from "../src/ipc/types.ts"
+import type { MemoryEntry, MemoryImportResult, MemorySearchResult, MemoryWriteResult, ScreenResult } from "../src/ipc/types.ts"
 
 let passed = 0
 function ok(name: string): void {
@@ -383,6 +384,25 @@ async function main(): Promise<void> {
         (e: unknown) => e instanceof BodyRpcError && e.code === "BAD_PARAMS",
       )
       ok("run.archive/run.list 全量归档往返 + outcome 枚举校验")
+
+      // ME-8 备份/恢复往返：export → 快照文件 → import 补缺（同 key 跳过、revoked/PII 跳过）
+      {
+        const before = await body.rpc<MemoryEntry[]>("memory.export", {})
+        assert.ok(before.some((m) => m.topic === "奶茶口味" || m.topic === "提交边界:立即支付"), "export 应含已有条目")
+        const tmpFile = join(tmpdir(), `sa-mem-snap-${Date.now()}.json`)
+        const n = await backupNow(body, tmpFile)
+        assert.equal(n, before.length, "备份条数=export 条数")
+        const snap = JSON.parse(readFileSync(tmpFile, "utf8")) as { entries: MemoryEntry[] }
+        rmSync(tmpFile)
+        const r2 = await body.rpc<MemoryImportResult>("memory.import", { entries: snap.entries })
+        assert.equal(r2.inserted, 0, "全量重导入应全部跳过（body 已有）")
+        assert.equal(r2.skipped, snap.entries.length)
+        const r3 = await body.rpc<MemoryImportResult>("memory.import", {
+          entries: [{ id: 0, kind: "preference", topic: "快递", content: "放前台驿站", confidence: 0.5, source: "restore", hits: 0, revoked: false, createdAt: 0, updatedAt: 0 }],
+        })
+        assert.equal(r3.inserted, 1, "新 key 应插入")
+        ok("ME-8 memory.export/backupNow/memory.import 备份恢复往返")
+      }
     }
 
     const ev1 = await body.events(0)

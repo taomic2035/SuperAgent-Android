@@ -37,6 +37,8 @@ class MemoryStoreTest {
         override fun findById(id: Long): MemoryEntry? = rows.firstOrNull { it.id == id }
 
         override fun active(): List<MemoryEntry> = rows.filter { !it.revoked }
+
+        override fun all(): List<MemoryEntry> = rows.toList()
     }
 
     private lateinit var db: FakeDb
@@ -75,6 +77,36 @@ class MemoryStoreTest {
         assertFalse(r.merged)
         assertTrue(MemoryStore.containsPii("卡号 6222020200112233345"))
         assertFalse(MemoryStore.containsPii("音量 30，延迟 1.5s"))
+    }
+
+    @Test
+    fun `ME-8 exportAll 含 revoked 条目`() {
+        store.write("preference", "奶茶口味", "少糖", "user-told")
+        store.write("preference", "奶茶口味", "无糖", "user-told") // 顶替 → 旧条 revoked
+        val all = store.exportAll()
+        assertEquals(2, all.size)
+        assertEquals(1, all.count { it.revoked })
+        assertEquals("无糖", all.first { !it.revoked }.content)
+    }
+
+    @Test
+    fun `ME-8 importEntries 补缺不覆盖不回写 revoked`() {
+        store.write("preference", "奶茶口味", "少糖", "user-told")
+        val r = store.importEntries(
+            listOf(
+                MemoryEntry(99, "preference", "奶茶口味", "全糖", 0.5, "restore", 0, false, 0, 0),   // 同 key：跳过（body 为准）
+                MemoryEntry(98, "preference", "快递", "放前台驿站", 0.5, "restore", 0, false, 0, 0), // 新 key：插入
+                MemoryEntry(97, "fact", "旧史", "被顶替旧版", 0.5, "restore", 0, true, 0, 0),        // revoked：跳过
+                MemoryEntry(96, "fact", "卡号", "6222020200112233345", 0.5, "restore", 0, false, 0, 0), // PII：跳过
+                MemoryEntry(95, "bogus", "非法kind", "x", 0.5, "restore", 0, false, 0, 0),           // kind 非法：跳过
+            ),
+        )
+        assertEquals(1, r.inserted)
+        assertEquals(4, r.skipped)
+        val active = db.active()
+        assertEquals(2, active.size)
+        assertEquals("少糖", active.first { it.topic == "奶茶口味" }.content) // 未被"全糖"覆盖
+        assertEquals("放前台驿站", active.first { it.topic == "快递" }.content)
     }
 
     @Test

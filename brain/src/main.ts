@@ -12,6 +12,7 @@ import { buildSystemPrompt, buildChatOnlyPrompt } from "./personas/promptBuilder
 import { beginRun, hasResumableRun, resumeRun, finishRun, peekRun, buildResumeContext, getRun, setArchiveSink } from "./runState.ts"
 import { env } from "./env.ts"
 import { speak } from "./tts/index.ts"
+import { scheduleBackup, checkRestoreHint } from "./memory/backup.ts"
 import { initBrainEvents, reportPromptStart, reportFinish, isStopRequested, clearStop, requestStop, requestPause, resumeFromPause } from "./ipc/brainEventReporter.ts"
 import { buildReflector, buildFailureReflector } from "./memory/reflect.ts"
 import type { FailureReflector, Reflector } from "./memory/reflect.ts"
@@ -36,6 +37,10 @@ async function main(): Promise<void> {
   console.log(`[brain] 等待躯体服务 ${BODY_URL} ...`)
   await body.waitForBody()
   console.log("[brain] 躯体已连接")
+
+  // ME-8 记忆备份（docs/15 §7）：6h 定时快照落 Termux + body 空库时提示恢复（不自动——尊重清空意愿）
+  scheduleBackup(body)
+  void checkRestoreHint(body).catch(() => undefined)
 
   // ME-3b 情景层全量归档（docs/15 §3）：终态 run 推 body SQLite（fire-and-forget，脱敏 snapshot）
   setArchiveSink((snap) => {

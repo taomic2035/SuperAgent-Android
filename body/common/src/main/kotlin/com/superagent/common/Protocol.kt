@@ -263,6 +263,13 @@ data class MemorySearchResult(
     val hits: List<MemorySearchHit>,
 )
 
+/** ME-8 恢复结果：补缺语义——只插入 body 缺失的 active 条目，不覆盖不动 revoked */
+@Serializable
+data class MemoryImportResult(
+    val inserted: Int,
+    val skipped: Int,
+)
+
 /** ME-3b 情景层全量归档（docs/15 §3）：run 历史 SQLite 化（Iron Law——环形 30 条会丢，全量不丢） */
 @Serializable
 data class RunRecord(

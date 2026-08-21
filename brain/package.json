@@ -16,7 +16,9 @@
     "start": "tsx src/main.ts",
     "contract": "tsx test/contract.ts",
     "integration": "tsx test/integration.ts",
-    "tts-chain": "tsx test/tts-online-chain.ts"
+    "tts-chain": "tsx test/tts-online-chain.ts",
+    "memory-backup": "tsx src/memory/backup-cli.ts backup",
+    "memory-restore": "tsx src/memory/backup-cli.ts restore"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "latest",

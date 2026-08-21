@@ -236,6 +236,29 @@ export function startMockBody(options: MockBodyOptions): Promise<{ port: number;
         memories.splice(i, 1)
         return void sendJson(res, 200, reply({}))
       }
+      case "memory.export":
+        return void sendJson(res, 200, reply(memories.map((m) => ({ ...m }))))
+      case "memory.import": {
+        const p = (params as { entries?: Array<{ kind?: string; topic?: string; content?: string; source?: string; confidence?: number; revoked?: boolean }> }) ?? {}
+        const list = p.entries ?? []
+        if (!Array.isArray(list)) return void sendJson(res, 200, fail("BAD_PARAMS", "entries 非法"))
+        const activeKeys = new Set(memories.filter((m) => !m.revoked).map((m) => `${m.kind}\u0000${m.topic}`))
+        let inserted = 0
+        let skipped = 0
+        const now = Date.now()
+        for (const e of list) {
+          const kind = (e.kind ?? "").trim()
+          const topic = (e.topic ?? "").trim()
+          if (e.revoked || !["fact", "preference", "lesson", "routine"].includes(kind) || !topic || !e.content || activeKeys.has(`${kind}\u0000${topic}`)) {
+            skipped++
+            continue
+          }
+          memories.push({ id: nextMemoryId++, kind, topic, content: e.content, confidence: e.confidence ?? 0.5, source: e.source ?? "restore", hits: 0, revoked: false, createdAt: now, updatedAt: now })
+          activeKeys.add(`${kind}\u0000${topic}`)
+          inserted++
+        }
+        return void sendJson(res, 200, reply({ inserted, skipped }))
+      }
       case "run.archive": {
         const p = (params as { goal?: string; outcome?: string; failureReason?: string; startedAt?: number; finishedAt?: number }) ?? {}
         if (!p.goal || !p.outcome) return void sendJson(res, 200, fail("BAD_PARAMS", "缺少 goal/outcome"))

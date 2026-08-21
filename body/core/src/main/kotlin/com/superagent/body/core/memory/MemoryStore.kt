@@ -5,6 +5,7 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import com.superagent.common.MemoryEntry
+import com.superagent.common.MemoryImportResult
 import com.superagent.common.MemorySearchHit
 import com.superagent.common.MemorySearchResult
 import com.superagent.common.MemoryWriteResult
@@ -27,6 +28,9 @@ interface MemoryDb {
 
     /** 全部未撤销条目（设备端规模为百级，检索在内存做，避免 SQL LIKE 转义面） */
     fun active(): List<MemoryEntry>
+
+    /** 全量（含 revoked）——ME-8 备份导出用（Iron Law 留痕） */
+    fun all(): List<MemoryEntry>
 }
 
 /** 生产实现：files/memory.db（android.database.sqlite，零新依赖；docs/15 §4 建表）。memories + runs 两表（ME-1/ME-3b）。 */
@@ -69,6 +73,8 @@ class AndroidSqliteMemoryDb(context: Context, name: String = "memory.db") :
         query("id=?", arrayOf(id.toString())).firstOrNull()
 
     override fun active(): List<MemoryEntry> = query("revoked=0", emptyArray())
+
+    override fun all(): List<MemoryEntry> = query("1", emptyArray())
 
     private fun query(where: String, args: Array<String>): List<MemoryEntry> =
         readableDatabase.query("memories", null, where, args, null, null, "updated_at DESC").use { c ->
@@ -241,6 +247,37 @@ class MemoryStore(private val db: MemoryDb) {
 
     /** 用户删除权 > Iron Law：物理删（docs/15 §4——操作日志不含内容）。 */
     fun forget(id: Long): Boolean = db.delete(id)
+
+    /** ME-8 备份导出：全量（含 revoked 留痕）。 */
+    fun exportAll(): List<MemoryEntry> = db.all()
+
+    /**
+     * ME-8 恢复（补缺语义，docs/15 §7 ME-8 行）：
+     * - 只插入 body 当前缺失的 topic+kind active 组合（不覆盖现有——body 为准）
+     * - revoked 历史不回写（快照文件本身留档即可，Iron Law 不要求重建历史）
+     * - PII 纵深同 write（快照可能来自旧版本/外部，同样不信任）
+     */
+    fun importEntries(entries: List<MemoryEntry>): MemoryImportResult {
+        val activeKeys = db.active().map { it.kind to it.topic }.toSet()
+        var inserted = 0
+        var skipped = 0
+        val now = System.currentTimeMillis()
+        for (e in entries) {
+            val kind = e.kind.trim()
+            val topic = e.topic.trim()
+            if (e.revoked || kind !in KINDS || topic.isEmpty() || containsPii(topic) || containsPii(e.content)) {
+                skipped++
+                continue
+            }
+            if (kind to topic in activeKeys) {
+                skipped++
+                continue
+            }
+            db.insert(newEntry(kind, topic, e.content.trim(), e.source.trim(), e.confidence, now))
+            inserted++
+        }
+        return MemoryImportResult(inserted, skipped)
+    }
 
     private fun newEntry(kind: String, topic: String, content: String, source: String, confidence: Double, now: Long) =
         MemoryEntry(

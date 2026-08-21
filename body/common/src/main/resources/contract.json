@@ -1,40 +1,269 @@
 {
   "$comment": "CT-05 契约镜像：brain src/ipc/types.ts ↔ body common Protocol.kt 的共享真源。字段名集合一致即镜像成立；brainOnly=brain 侧扩展字段（body ignoreUnknownKeys 兼容）；bodyOnly=body 独有子结构（brain 内联表达）。改任一侧字段必须同步本文件，两侧镜像测试（brain npm run contract / body :common:test ContractMirrorTest）会拦漂移。",
   "types": {
-    "RpcRequest": { "fields": ["id", "method", "params", "idempotencyKey"] },
-    "RpcError": { "fields": ["code", "message", "reason", "nonce"], "bodyOnly": true },
-    "RpcResponse": { "fields": ["id", "ok", "result", "error"] },
-    "Bounds": { "fields": ["left", "top", "right", "bottom"], "bodyOnly": true },
-    "Point": { "fields": ["x", "y"], "bodyOnly": true },
-    "BodyEvent": { "fields": ["seq", "type", "payload"] },
-    "HealthStatus": { "fields": ["ok", "bootId", "protocolVersion", "uptimeMs", "services"] },
-    "ActionResult": { "fields": ["located", "signature", "note"] },
-    "A11yNode": { "fields": ["label", "clickable", "selected", "sensitive", "bounds"] },
-    "Mark": { "fields": ["index", "text", "center"] },
-    "ScreenResult": { "fields": ["signature", "kind", "blank", "nodes", "marks", "pageTexts", "appPackage", "sensitiveSession", "screenshotRef"] },
-    "AsrResult": { "fields": ["text", "confidence", "durationMs"] },
-    "SayResult": { "fields": ["route"] },
-    "VoiceprintEnrollResult": { "fields": ["speaker", "samples"] },
-    "VoiceprintIdentifyResult": { "fields": ["speaker", "confidence"] },
-    "SensorResult": { "fields": ["type", "value", "timestamp"] },
-    "HeadsetResult": { "fields": ["connected", "type"] },
-    "SkillMeta": { "fields": ["name", "description", "appPackage", "tags"] },
-    "SkillListResult": { "fields": ["skills"] },
-    "SkillSearchHit": { "fields": ["skill", "score"] },
-    "SkillSearchResult": { "fields": ["hits"] },
-    "SkillRunResult": { "fields": ["result", "completedSteps"] },
-    "SkillLearnResult": { "fields": ["slug"] },
-    "HitlConfirmResult": { "fields": ["approved"] },
-    "HitlAskResult": { "fields": ["answer"] },
-    "HitlHandoffResult": { "fields": ["taken"] },
-    "TraceStep": { "fields": ["tool", "args", "located", "signature", "timestamp"], "brainOnly": ["sensitive", "resultKind"] },
-    "BrainEvent": { "fields": ["taskId", "seq", "state", "stepIndex", "displayText", "requiresUser", "resultKind", "timestamp"] },
-    "MemoryEntry": { "fields": ["id", "kind", "topic", "content", "confidence", "source", "hits", "revoked", "createdAt", "updatedAt"] },
-    "MemoryWriteResult": { "fields": ["id", "merged"] },
-    "MemorySearchHit": { "fields": ["memory", "score"] },
-    "MemorySearchResult": { "fields": ["hits"] },
-    "RunRecord": { "fields": ["id", "goal", "outcome", "failureReason", "trace", "startedAt", "finishedAt", "archivedAt"] },
-    "RunArchiveResult": { "fields": ["id"] },
-    "RunListResult": { "fields": ["runs"] }
+    "RpcRequest": {
+      "fields": [
+        "id",
+        "method",
+        "params",
+        "idempotencyKey"
+      ]
+    },
+    "RpcError": {
+      "fields": [
+        "code",
+        "message",
+        "reason",
+        "nonce"
+      ],
+      "bodyOnly": true
+    },
+    "RpcResponse": {
+      "fields": [
+        "id",
+        "ok",
+        "result",
+        "error"
+      ]
+    },
+    "Bounds": {
+      "fields": [
+        "left",
+        "top",
+        "right",
+        "bottom"
+      ],
+      "bodyOnly": true
+    },
+    "Point": {
+      "fields": [
+        "x",
+        "y"
+      ],
+      "bodyOnly": true
+    },
+    "BodyEvent": {
+      "fields": [
+        "seq",
+        "type",
+        "payload"
+      ]
+    },
+    "HealthStatus": {
+      "fields": [
+        "ok",
+        "bootId",
+        "protocolVersion",
+        "uptimeMs",
+        "services"
+      ]
+    },
+    "ActionResult": {
+      "fields": [
+        "located",
+        "signature",
+        "note"
+      ]
+    },
+    "A11yNode": {
+      "fields": [
+        "label",
+        "clickable",
+        "selected",
+        "sensitive",
+        "bounds"
+      ]
+    },
+    "Mark": {
+      "fields": [
+        "index",
+        "text",
+        "center"
+      ]
+    },
+    "ScreenResult": {
+      "fields": [
+        "signature",
+        "kind",
+        "blank",
+        "nodes",
+        "marks",
+        "pageTexts",
+        "appPackage",
+        "sensitiveSession",
+        "screenshotRef"
+      ]
+    },
+    "AsrResult": {
+      "fields": [
+        "text",
+        "confidence",
+        "durationMs"
+      ]
+    },
+    "SayResult": {
+      "fields": [
+        "route"
+      ]
+    },
+    "VoiceprintEnrollResult": {
+      "fields": [
+        "speaker",
+        "samples"
+      ]
+    },
+    "VoiceprintIdentifyResult": {
+      "fields": [
+        "speaker",
+        "confidence"
+      ]
+    },
+    "SensorResult": {
+      "fields": [
+        "type",
+        "value",
+        "timestamp"
+      ]
+    },
+    "HeadsetResult": {
+      "fields": [
+        "connected",
+        "type"
+      ]
+    },
+    "SkillMeta": {
+      "fields": [
+        "name",
+        "description",
+        "appPackage",
+        "tags"
+      ]
+    },
+    "SkillListResult": {
+      "fields": [
+        "skills"
+      ]
+    },
+    "SkillSearchHit": {
+      "fields": [
+        "skill",
+        "score"
+      ]
+    },
+    "SkillSearchResult": {
+      "fields": [
+        "hits"
+      ]
+    },
+    "SkillRunResult": {
+      "fields": [
+        "result",
+        "completedSteps"
+      ]
+    },
+    "SkillLearnResult": {
+      "fields": [
+        "slug"
+      ]
+    },
+    "HitlConfirmResult": {
+      "fields": [
+        "approved"
+      ]
+    },
+    "HitlAskResult": {
+      "fields": [
+        "answer"
+      ]
+    },
+    "HitlHandoffResult": {
+      "fields": [
+        "taken"
+      ]
+    },
+    "TraceStep": {
+      "fields": [
+        "tool",
+        "args",
+        "located",
+        "signature",
+        "timestamp"
+      ],
+      "brainOnly": [
+        "sensitive",
+        "resultKind"
+      ]
+    },
+    "BrainEvent": {
+      "fields": [
+        "taskId",
+        "seq",
+        "state",
+        "stepIndex",
+        "displayText",
+        "requiresUser",
+        "resultKind",
+        "timestamp"
+      ]
+    },
+    "MemoryEntry": {
+      "fields": [
+        "id",
+        "kind",
+        "topic",
+        "content",
+        "confidence",
+        "source",
+        "hits",
+        "revoked",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "MemoryWriteResult": {
+      "fields": [
+        "id",
+        "merged"
+      ]
+    },
+    "MemorySearchHit": {
+      "fields": [
+        "memory",
+        "score"
+      ]
+    },
+    "MemorySearchResult": {
+      "fields": [
+        "hits"
+      ]
+    },
+    "RunRecord": {
+      "fields": [
+        "id",
+        "goal",
+        "outcome",
+        "failureReason",
+        "trace",
+        "startedAt",
+        "finishedAt",
+        "archivedAt"
+      ]
+    },
+    "RunArchiveResult": {
+      "fields": [
+        "id"
+      ]
+    },
+    "RunListResult": {
+      "fields": [
+        "runs"
+      ]
+    },
+    "MemoryImportResult": {
+      "fields": [
+        "inserted",
+        "skipped"
+      ]
+    }
   }
 }

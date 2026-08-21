@@ -186,6 +186,12 @@ export interface MemorySearchResult {
   hits: MemorySearchHit[]
 }
 
+/** ME-8 恢复结果：补缺语义——只插入 body 缺失的 active 条目，不覆盖不动 revoked */
+export interface MemoryImportResult {
+  inserted: number
+  skipped: number
+}
+
 /** ME-3b 情景层全量归档（docs/15 §3）：run 历史 SQLite 化（环形 30 条会丢，全量不丢） */
 export interface RunRecord {
   id: number

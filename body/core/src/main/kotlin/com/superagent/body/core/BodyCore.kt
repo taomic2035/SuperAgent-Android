@@ -432,6 +432,24 @@ class BodyCore(
             if (memories.forget(id)) emptyOk(req) else bad(req, "NOT_FOUND", "记忆条目不存在: $id")
         }
 
+        // ME-8 备份导出（docs/15 §7）：全量含 revoked——brain 定期拉快照落 Termux（"不丢记忆"补丁）
+        server.rpc("memory.export") { req ->
+            ok(req, memories.exportAll())
+        }
+
+        // ME-8 恢复：补缺语义（只插 body 缺失的 active 组合，不覆盖不动 revoked；PII 同 write 红线）
+        server.rpc("memory.import") { req ->
+            val entries = params(req).json.get("entries")?.let {
+                runCatching { json.decodeFromJsonElement<List<com.superagent.common.MemoryEntry>>(it) }.getOrNull()
+            } ?: return@rpc bad(req, "BAD_PARAMS", "缺少/非法 entries")
+            if (entries.size > 5000) return@rpc bad(req, "BAD_PARAMS", "entries 过多: ${entries.size}")
+            runCatching { memories.importEntries(entries) }
+                .fold(
+                    { ok(req, it) },
+                    { e -> bad(req, "MEMORY_STORE", e.message ?: "导入失败") },
+                )
+        }
+
         // ME-3b 情景层全量归档（docs/15 §3）：run 快照 SQLite 全量留存（不环形淘汰）
         server.rpc("run.archive") { req ->
             val p = params(req)
