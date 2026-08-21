@@ -1,12 +1,12 @@
 package com.superagent.body.core.control
 
-import android.graphics.Rect
-import android.view.accessibility.AccessibilityNodeInfo
 import com.superagent.body.core.perception.ScreenPerceiver
+import com.superagent.body.core.security.ActionGate
+import com.superagent.body.core.security.SensitiveSessionTracker
 import com.superagent.common.ActionResult
-import com.superagent.common.Mark
 import com.superagent.common.CommitBoundaryGuard
 import com.superagent.common.Point
+import com.superagent.common.ScreenResult
 import kotlinx.coroutines.delay
 import kotlin.math.abs
 
@@ -14,12 +14,32 @@ import kotlin.math.abs
  * 按可见文字定位并点选。
  * 双保险：点选前再次做支付红线校验（即使感知阶段漏标也能拦截）。
  */
-class OptionSelector(
-    private val perceiver: ScreenPerceiver,
-    private val controller: Controller,
-    /** AUDIT-01：内部 tap（verifySelected 分支）也须经闸门——不因 Kotlin 层直调绕过坐标校验 */
-    private val sensitive: com.superagent.body.core.security.SensitiveSessionTracker? = null,
+class OptionSelector private constructor(
+    private val perceive: (String) -> ScreenResult,
+    private val coordinateGate: (Int, Int) -> ActionGate.Violation?,
+    private val tap: suspend (Int, Int) -> ActionResult,
+    @Suppress("UNUSED_PARAMETER") seam: Unit,
 ) {
+
+    constructor(
+        perceiver: ScreenPerceiver,
+        controller: Controller,
+        /** AUDIT-01：内部 tap 也须经闸门——不因 Kotlin 层直调绕过坐标校验 */
+        sensitive: SensitiveSessionTracker? = null,
+    ) : this(
+        perceive = { mode -> perceiver.perceive(mode) },
+        coordinateGate = { x, y ->
+            sensitive?.let { ActionGate.violatingLabel(perceiver, it, x, y) }
+        },
+        tap = { x, y -> controller.tap(x, y) },
+        seam = Unit,
+    )
+
+    internal constructor(
+        perceive: (String) -> ScreenResult,
+        coordinateGate: (Int, Int) -> ActionGate.Violation?,
+        tap: suspend (Int, Int) -> ActionResult,
+    ) : this(perceive, coordinateGate, tap, Unit)
 
     /**
      * 按 label 定位并点击。near 为同文多匹配时的就近消歧参考。
@@ -30,7 +50,7 @@ class OptionSelector(
         if (CommitBoundaryGuard.isCommitBoundary(normalized)) {
             return ActionResult(false, null, "COMMIT_BOUNDARY")
         }
-        val screen = perceiver.perceive("a11y")
+        val screen = perceive("a11y")
         val marks = screen.marks.orEmpty()
         if (screen.blank || marks.isEmpty()) {
             return ActionResult(false, null, "屏幕无文字，无法定位「$label」")
@@ -49,21 +69,20 @@ class OptionSelector(
             near != null -> candidates.minByOrNull { dist(it.center, near) } ?: candidates.first()
             else -> candidates.first()
         }
+        val violation = coordinateGate(target.center.x, target.center.y)
+        if (violation != null) {
+            return ActionResult(false, null, "GATE_BLOCKED:${violation.label}")
+        }
         if (verifySelected) {
-            val before = perceiver.perceive("a11y").signature
-            // AUDIT-01：内部 tap 前做坐标闸门（不因 Kotlin 直调绕过）
-            if (sensitive != null) {
-                val v = com.superagent.body.core.security.ActionGate.violatingLabel(perceiver, sensitive, target.center.x, target.center.y)
-                if (v != null) return ActionResult(false, null, "GATE_BLOCKED:${v.label}")
-            }
-            controller.tap(target.center.x, target.center.y)
+            val before = perceive("a11y").signature
+            tap(target.center.x, target.center.y)
             delay(300)
-            val after = perceiver.perceive("a11y").signature
+            val after = perceive("a11y").signature
             if (before == after && after.isNotEmpty()) {
                 return ActionResult(false, null, "点选后界面无变化（选中态校验失败）")
             }
         } else {
-            controller.tap(target.center.x, target.center.y)
+            tap(target.center.x, target.center.y)
         }
         return ActionResult(true, ScreenPerceiver.signature(listOf(target)))
     }

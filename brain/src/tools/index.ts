@@ -1,6 +1,6 @@
 import { Type } from "typebox"
 import type { AgentTool } from "@earendil-works/pi-agent-core"
-import { getRun, setBaseline, finishRun, noteFinishRejected, markFinishVerified } from "../runState.ts"
+import { getRun, setBaseline, noteFinishRejected, markFinishVerified } from "../runState.ts"
 import { markFinishRejected } from "../guards/index.ts"
 import { verifyEvidence } from "../guards/finish.ts"
 import type { RelevanceCheck } from "../guards/relevance.ts"
@@ -533,8 +533,9 @@ export function buildTools(
             console.warn(`[brain] skill.learn 固化失败：${learnError}`)
           }
         }
+        // C-05（docs/16 §5）：wrapper 是终态唯一写者——工具只标记核验通过并返回，
+        // success 终态由 promptAgent wrapper 统一判定写入（此前工具+wrapper 双写 → 双重归档）
         markFinishVerified()
-        finishRun("success")
         // ME-2 反思提取（docs/15 §5）：证据核验通过后异步入库——fire-and-forget，绝不阻塞任务完成
         if (reflect) {
           // G2-05 防御纪律：显式吞 rejection，不依赖全局 unhandledRejection handler（会误写 crashed 终态）

@@ -72,9 +72,23 @@ export function addTrace(step: TraceStep): void {
   persist()
 }
 
-/** 标记 run 结束（成功/失败/崩溃都调），落盘全历史。成功时清证据驳回计数。 */
+/**
+ * C-05（docs/16 §5）：resumable 显式策略表——终态可续性不再隐式推断。
+ * closed=对话型收笔（正常结束）不可续；failed/crashed/needs_human 可断点续跑（TC-14）。
+ */
+const RESUMABLE: Record<RunOutcome, boolean> = {
+  success: false,
+  failed: true,
+  crashed: true,
+  needs_human: true,
+  closed: false,
+}
+
+/** 标记 run 结束（成功/失败/崩溃都调），落盘全历史。成功时清证据驳回计数。
+ *  C-05：幂等门——已有终态的二次调用直接忽略（防双写/双归档；wrapper 是唯一写者）。 */
 export function finishRun(outcome: RunOutcome, failureReason?: string): void {
   if (!current) return
+  if (current.outcome) return // 已终态：不覆盖、不重归档
   current.outcome = outcome
   current.failureReason = failureReason
   if (outcome === "success") current.finishRejectCount = 0
@@ -137,10 +151,10 @@ export function resetRun(): void {
   clearPersisted()
 }
 
-/** 预览可续跑任务（不动 current）。成功终态的任务不再可续。 */
+/** 预览可续跑任务（不动 current）。可续性按 RESUMABLE 策略表（C-05）。 */
 export function peekRun(): RunState | null {
   const saved = loadPersisted()
-  return saved && saved.outcome !== "success" ? saved : null
+  return saved && saved.outcome ? (RESUMABLE[saved.outcome] ? saved : null) : saved
 }
 
 export function hasResumableRun(): boolean {
@@ -149,8 +163,16 @@ export function hasResumableRun(): boolean {
 
 export function resumeRun(): RunState | null {
   const saved = loadPersisted()
-  if (saved) current = saved
-  return saved
+  if (saved) {
+    current = saved
+    // C-05：续跑=该 run 的新生命周期——清旧终态与核验标记（finishRun 幂等门下终态只写一次，
+    // 续跑成功/失败是新的那一次；无终态快照落盘后 peekRun 仍视为可续）
+    current.outcome = undefined
+    current.failureReason = undefined
+    current.finishVerified = false
+    persist()
+  }
+  return current
 }
 
 /**

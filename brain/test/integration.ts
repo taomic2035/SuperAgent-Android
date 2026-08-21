@@ -70,8 +70,13 @@ async function main(): Promise<void> {
         assert.ok(details.evidenceVerified, "证据核验应通过")
         assert.ok(details.learned, "应触发技能固化")
         assert.ok(getRun().finishVerified, "run 应标记 finishVerified")
+        // C-05：工具不再写终态（wrapper 唯一写者）——此处模拟 promptAgent 收尾
+        finishRun("success")
         assert.equal(getRun().outcome, "success")
-        ok("完整链：perceive→baseline→act×2→finish(evidence verified)→learn")
+        // C-05 幂等门：同 run 二次 finishRun 无副作用（不重归档）
+        finishRun("closed")
+        assert.equal(getRun().outcome, "success")
+        ok("完整链：perceive→baseline→act×2→finish(evidence verified)→learn（终态单写+幂等）")
       } finally {
         delete process.env.SUPER_AGENT_STATE_DIR
       }
