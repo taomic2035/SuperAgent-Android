@@ -34,37 +34,48 @@ class FloatingUiService : android.app.Service() {
     private var ball: View? = null
     private var strip: TextView? = null
     private var panel: LinearLayout? = null
-    private lateinit var ui: UiStateController
+    private var ui: UiStateController? = null
     private var panelOpen = false
+
+    /** #37：readiness 退订 handle（onDestroy 注销，销毁后迟到 publish 不再 addView） */
+    private var unsubscribeBus: (() -> Unit)? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
-        val bus = UiBus.events
-        if (bus == null) {
-            // #36：body 重启时序竞态——UiBus 可能尚未初始化（core.start() 与本服务启动竞速）。
-            // 延迟 1s 重试而非立即自杀（START_STICKY 恢复场景下悬浮层不再丢失）
-            android.os.Handler(mainLooper).postDelayed({
-                val retryBus = UiBus.events
-                if (retryBus != null) {
-                    initUi(retryBus)
-                } else {
-                    android.util.Log.w("FloatingUiService", "UiBus 仍为空（1s 重试后），悬浮层放弃启动")
-                    stopSelf()
-                }
-            }, 1000)
-            return
+        // #37 readiness 契约（GPT 授权修复）：无 1s 超时自杀——等 publish 必达；
+        // initUiOnce 主线程幂等（重复 start/迟到 publish 只初始化一套 UI）
+        observeBusOnce()
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        super.onStartCommand(intent, flags, startId)
+        // 服务已存在时的新 start：幂等触发 readiness 检查（覆盖先 start 服务后起 core 的顺序）
+        observeBusOnce()
+        return START_STICKY
+    }
+
+    private fun observeBusOnce() {
+        if (unsubscribeBus != null) return // 已注册等待/已就绪
+        unsubscribeBus = UiBus.observeEvents { bus ->
+            android.os.Handler(mainLooper).post { initUiOnce(bus) }
         }
+    }
+
+    /** #37：幂等初始化——重复触发只建一套 ball/strip/controller */
+    private fun initUiOnce(bus: com.superagent.body.core.events.EventBus) {
+        if (ui != null) return
         initUi(bus)
     }
 
     private fun initUi(bus: com.superagent.body.core.events.EventBus) {
         ui = UiStateController(bus)
-        ui.start()
+        ui!!.start()
         com.superagent.body.core.ui.UiBus.stateController = ui
-        ui.subscribe { snap ->
+        val controller = ui!!
+        controller.subscribe { snap ->
             android.os.Handler(mainLooper).post {
                 render(snap)
                 updateNotification(snap)
@@ -88,7 +99,7 @@ class FloatingUiService : android.app.Service() {
     /** U2-H04 完整版：通知随 UI 状态实时更新（非仅构建时） */
     private fun updateNotification(snap: UiStateController.Snapshot) {
         val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
-        val text = ui.notificationText()
+        val text = ui?.notificationText() ?: return
         val notification = android.app.Notification.Builder(this, "body-service")
             .setSmallIcon(android.R.drawable.ic_menu_compass)
             .setContentTitle("超级AI助手")
@@ -99,8 +110,10 @@ class FloatingUiService : android.app.Service() {
     }
 
     override fun onDestroy() {
+        unsubscribeBus?.invoke() // #37：注销 readiness——销毁后迟到 publish 不得 addView
+        unsubscribeBus = null
         OverlayGate.unregister()
-        runCatching { ui.stop() } // U2-H05：清理监听器与定时线程
+        runCatching { ui?.stop() } // U2-H05：清理监听器与定时线程
         runCatching {
             if (UiBus.stateController === ui) UiBus.stateController = null
         }
@@ -153,7 +166,7 @@ class FloatingUiService : android.app.Service() {
     }
 
     private fun onBallClick() {
-        when (FloatingUiPolicy.onBallClick(ui.state, panelOpen)) {
+        when (FloatingUiPolicy.onBallClick(ui?.state ?: UiStateController.UiState.OFFLINE, panelOpen)) {
             FloatingUiPolicy.BallAction.OPEN_IDLE_PANEL -> showIdlePanel()
             FloatingUiPolicy.BallAction.OPEN_RESULT_PANEL -> showResultPanel()
             FloatingUiPolicy.BallAction.OPEN_BLOCKED_PANEL -> showBlockedPanel()
@@ -169,7 +182,7 @@ class FloatingUiService : android.app.Service() {
     /** U2-#34：结果摘要面板（展示结果 + "新任务"重置到 IDLE + 关闭） */
     private fun showResultPanel() {
         if (panelOpen) { closePanel(); return }
-        val snap = ui.snapshot()
+        val snap = ui?.snapshot() ?: return
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
@@ -189,7 +202,7 @@ class FloatingUiService : android.app.Service() {
             text = "📝  新任务"
             setOnClickListener {
                 closePanel()
-                ui.setIdle() // 重置到 IDLE——解除终态锁死
+                ui?.setIdle() // 重置到 IDLE——解除终态锁死
                 showIdlePanel()
             }
         })
@@ -211,7 +224,7 @@ class FloatingUiService : android.app.Service() {
     /** 未知执行结果处置面板：只提示用户核对设备，不提供任何继续执行入口。 */
     private fun showBlockedPanel() {
         if (panelOpen) { closePanel(); return }
-        val model = FloatingUiPolicy.blockedPanel(ui.snapshot().currentStep)
+        val model = FloatingUiPolicy.blockedPanel(ui?.snapshot()?.currentStep ?: "")
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
@@ -259,7 +272,7 @@ class FloatingUiService : android.app.Service() {
             setPadding(48, 36, 48, 36)
         }
         root.addView(TextView(this).apply {
-            text = if (ui.state == UiStateController.UiState.OFFLINE) "离线 · 大脑未连接" else "超级AI助手"
+            text = if (ui?.state == UiStateController.UiState.OFFLINE) "离线 · 大脑未连接" else "超级AI助手"
             textSize = 16f; setTextColor(Color.WHITE); setPadding(0, 0, 0, 20)
         })
         root.addView(Button(this).apply {
@@ -311,7 +324,7 @@ class FloatingUiService : android.app.Service() {
 
     private fun togglePanel() {
         if (panelOpen) { closePanel(); return }
-        val snap = ui.snapshot()
+        val snap = ui?.snapshot() ?: return
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = GradientDrawable().apply { setColor(Color.argb(225, 24, 24, 32)); cornerRadius = 28f }
@@ -335,7 +348,7 @@ class FloatingUiService : android.app.Service() {
         row.addView(Button(this).apply {
             text = "继续"
             setOnClickListener {
-                ui.requestResume()
+                ui?.requestResume()
                 closePanel()
             }
         }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))

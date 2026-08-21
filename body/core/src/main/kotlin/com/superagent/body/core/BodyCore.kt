@@ -83,7 +83,7 @@ class BodyCore(
     fun start(): Boolean {
         if (!started.compareAndSet(false, true)) return false
         // UI-0：body 是 UI 唯一 owner——悬浮层经 UiBus 订阅同源事件（docs/05 §6.1）
-        com.superagent.body.core.ui.UiBus.events = events
+        com.superagent.body.core.ui.UiBus.publish(events) // #37：publish 含唤醒（替代裸赋值——防悬浮层丢唤醒）
         // AD-11：回放与 RPC 共用唯一动作执行入口
         skills.executor = actionExecutor
         registerHandlers()
