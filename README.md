@@ -6,7 +6,7 @@
 
 [![status](https://img.shields.io/badge/status-v0.1.0%20post--release%20audit-orange)]()
 [![license](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
-[![tests](https://img.shields.io/badge/tests-brain31%20%7C%20body80-brightgreen)]()
+[![tests](https://img.shields.io/badge/tests-brain31%20%7C%20body81-brightgreen)]()
 [![protocol](https://img.shields.io/badge/IPC-v2-orange)](docs/07-接口规格说明书.md)
 
 ---
@@ -23,7 +23,7 @@
 | M3 飞轮绿 | ✅ | 技能回放（签名步进校验）+ 状态机（candidate→verified） |
 | G5 交互绿 | ◐ | 悬浮 UI 可用；暂停/继续与离线输入协议未闭环 |
 | M4 语音绿 | ◐ | ASR 与在线播报有真机证据；本地 sherpa TTS 当前禁用，系统 TTS 兜底 |
-| M5 工程绿 | ◐ | 本轮 brain 25 smoke+6 integration、body 80 JVM 全绿；APK/真机未复验 |
+| M5 工程绿 | ◐ | 本轮 brain 25 smoke+6 integration、body 81 JVM 与 Debug APK 构建全绿；真机未复验 |
 | ME 记忆 | ◐ | SQLite、反思、归档、备份已实现；注入覆盖/重复归档/快照治理待修 |
 
 审计详情见 [docs/16](docs/16-当前架构代码审计-2026-08-21.md)，整改后的当前方案见 [docs/17](docs/17-当前方案设计.md)。
@@ -131,7 +131,7 @@ bash scripts/fetch-models.sh   # 下载 sherpa-onnx .so + ASR/TTS/声纹模型�
 
 ```bash
 cd body
-./gradlew :common:test :core:testDebugUnitTest   # 当前 80 项 JVM 单测
+./gradlew :common:test :core:testDebugUnitTest   # 当前 81 项 JVM 单测
 ./gradlew :app:assembleDebug                     # Debug APK 当前约 1.01GB
 bash scripts/install.sh                          # 装机 + token 桥接
 ```
@@ -159,8 +159,9 @@ BODY_URL=http://127.0.0.1:8765 BODY_TOKEN=$(adb shell run-as com.superagent.body
 | IPC 契约 | `npm run contract` | 34 个共享类型一致 |
 | brain 行为 | `npm run smoke` | 25 项通过 |
 | brain 集成 | `npm run integration` | 6 项通过 |
-| body JVM | `:common:test :core:testDebugUnitTest` | 80 项通过 |
-| APK / 真机 | `:app:assembleDebug` + 装机验收 | 本轮尚未复验 |
+| body JVM | `:common:test :core:testDebugUnitTest` | 81 项通过 |
+| APK 构建 | `:app:assembleDebug` | 本轮通过 |
+| 真机 | 装机验收 | 本轮尚未复验 |
 
 ```bash
 # brain

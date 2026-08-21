@@ -13,7 +13,7 @@ import { beginRun, hasResumableRun, resumeRun, finishRun, peekRun, buildResumeCo
 import { env } from "./env.ts"
 import { speak } from "./tts/index.ts"
 import { scheduleBackup, checkRestoreHint, maintainIfDue } from "./memory/backup.ts"
-import { initBrainEvents, reportPromptStart, reportFinish, isStopRequested, clearStop, requestStop, requestPause, resumeFromPause } from "./ipc/brainEventReporter.ts"
+import { initBrainEvents, reportPromptStart, reportFinish, isStopRequested, isPaused, clearStop, requestStop, requestPause, resumeFromPause } from "./ipc/brainEventReporter.ts"
 import { buildReflector, buildFailureReflector } from "./memory/reflect.ts"
 import type { FailureReflector, Reflector } from "./memory/reflect.ts"
 import type { AsrResult, BodyEvent, MemorySearchResult, SkillListResult } from "./ipc/types.ts"
@@ -231,6 +231,13 @@ async function main(): Promise<void> {
         finishRun("failed", "用户停止")
         return
       }
+      // #26 暂停 settle：pause terminate 后 run 正常 resolve——必须报 paused（此前误报 success，
+      // UI 永远到不了 PAUSED）。runState 记 closed（暂停≠失败，不进失败反思）
+      if (isPaused()) {
+        reportFinish("paused", "已暂停")
+        finishRun("closed", "用户暂停")
+        return
+      }
       // P1-01 语义一致：finishVerified → success；否则 closed（对话型收笔≠失败，不吓用户）
       if (getRun().finishVerified) {
         reportFinish("success", "任务完成")
@@ -333,7 +340,13 @@ async function main(): Promise<void> {
           resumeFromPause()
           console.log("[brain] 收到恢复请求，继续执行")
         } else if (kind === "barge_in") {
-          console.log("[brain] 用户打断了播报（barge-in），等待下一轮输入")
+          // #33（G1-08）：打断播报 = 用户要说话——语音模式立即开新一轮收听；文字模式仅记日志
+          if (VOICE_MODE) {
+            console.log("[brain] 用户打断了播报（barge-in），重新收听")
+            void enqueueTask(() => voiceTurn(body, promptAgent))
+          } else {
+            console.log("[brain] 用户打断了播报（barge-in），等待下一轮输入")
+          }
         }
       }
       await sleep(500)

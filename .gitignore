@@ -60,6 +60,9 @@ brain/dist/
 
 brain/.super-agent/
 
+# 本地 Agent 状态与记忆快照（可能包含私人数据，任何运行目录都不得入库）
+.super-agent/
+
 SESSION.md
 
 docs/handoff/

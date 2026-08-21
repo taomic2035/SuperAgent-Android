@@ -27,6 +27,7 @@ const TRACE_TOOLS = new Set([
   "control.back",
   "control.home",
   "control.launch",
+  "skill.run", // #28：复合技能回放同样产生 act/act_done 步进（UI 与进化度量的证据链）
 ])
 
 /**

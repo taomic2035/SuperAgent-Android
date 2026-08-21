@@ -106,6 +106,14 @@ export async function reportHitlWait(text: string): Promise<void> {
   await emit("hitl_wait", text, { requiresUser: "confirm" })
 }
 
-export async function reportFinish(resultKind: "success" | "failed" | "aborted", text: string): Promise<void> {
+export type FinishResultKind =
+  | "success"
+  | "failed"
+  | "aborted" // 用户停止（UI 映射 STOPPED）
+  | "paused" // 用户暂停（#26：暂停 settle 终态，UI 映射 PAUSED——不得再误报 success）
+  | "stopped" // 保留（docs/12 枚举完整；stopped 与 aborted 语义分流时启用）
+  | "unknown_side_effect" // 停止后设备状态未确认（保留，UI 已映射 FAILED·确认中）
+
+export async function reportFinish(resultKind: FinishResultKind, text: string): Promise<void> {
   await emit("finish", text, { resultKind })
 }
