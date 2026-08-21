@@ -61,6 +61,7 @@ export interface ScreenResult {
   screenshotWidth?: number
   screenshotHeight?: number
   visionFallback?: VisionFallback
+  visionActionToken?: string
 }
 
 export type VisionFallback = "provider_unavailable" | "invalid_output" | "invalid_coordinates" | "missing_dimensions"

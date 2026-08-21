@@ -21,6 +21,38 @@ interface ContractEntry {
 
 const contract = JSON.parse(readFileSync(CONTRACT_PATH, "utf8")).types as Record<string, ContractEntry>
 
+assert.deepEqual(contract.ScreenResult.fields, [
+  "signature",
+  "kind",
+  "blank",
+  "nodes",
+  "marks",
+  "pageTexts",
+  "appPackage",
+  "sensitiveSession",
+  "screenshotRef",
+  "screenWidth",
+  "screenHeight",
+  "screenshotWidth",
+  "screenshotHeight",
+  "visionFallback",
+  "visionActionToken",
+])
+assert.deepEqual(contract.ScreenResult.optional, [
+  "nodes",
+  "marks",
+  "pageTexts",
+  "appPackage",
+  "sensitiveSession",
+  "screenshotRef",
+  "screenWidth",
+  "screenHeight",
+  "screenshotWidth",
+  "screenshotHeight",
+  "visionFallback",
+  "visionActionToken",
+])
+
 const source = ts.createSourceFile("types.ts", readFileSync(TYPES_PATH, "utf8"), ts.ScriptTarget.ES2022, true)
 interface InterfaceShape {
   fields: string[]

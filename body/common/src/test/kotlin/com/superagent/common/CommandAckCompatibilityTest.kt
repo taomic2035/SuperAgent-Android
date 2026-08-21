@@ -11,6 +11,27 @@ import org.junit.jupiter.api.Test
 class CommandAckCompatibilityTest {
 
     @Test
+    fun `旧 ScreenResult 缺少视觉动作令牌时解码为 null`() {
+        val screen = json.decodeFromString<ScreenResult>(
+            """{"signature":"screen-1","kind":"vision","blank":false}""",
+        )
+
+        assertNull(screen.visionActionToken)
+    }
+
+    @Test
+    fun `视觉动作令牌可以往返序列化`() {
+        val screen = ScreenResult(
+            signature = "screen-1",
+            kind = "vision",
+            blank = false,
+            visionActionToken = "vision-action-1",
+        )
+
+        assertEquals(screen, json.decodeFromString<ScreenResult>(json.encodeToString(screen)))
+    }
+
+    @Test
     fun `旧事件缺少关联字段时解码为 null`() {
         val body = json.decodeFromString<BodyEvent>("""{"seq":1,"type":"voice"}""")
         val brain = json.decodeFromString<BrainEvent>(

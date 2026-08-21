@@ -115,6 +115,7 @@ data class ScreenResult(
     val screenshotWidth: Int? = null,
     val screenshotHeight: Int? = null,
     val visionFallback: VisionFallback? = null,
+    val visionActionToken: String? = null,
 )
 
 @Serializable
