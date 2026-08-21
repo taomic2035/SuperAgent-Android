@@ -21,6 +21,12 @@ class ScreenPerceiver(private val accessibilityService: () -> AccessibilityServi
     @Volatile
     private var cachedKey = ""
 
+    /** C-04（docs/16 §6）：最近一次 a11y 扫描是否含 WebView——结构化信号供 L2 auto 路由，
+     *  替代 BodyCore 在可见 label 里字符串匹配 "WebView" 的脆弱判法。 */
+    @Volatile
+    var lastScanHasWebView: Boolean = false
+        private set
+
     fun perceive(mode: String = "auto", inSensitiveSession: Boolean = false): ScreenResult {
         // 缓存命中：同 mode + 同敏感态 + 300ms 内
         val key = "$mode:$inSensitiveSession"
@@ -38,6 +44,7 @@ class ScreenPerceiver(private val accessibilityService: () -> AccessibilityServi
         var hasWebView = false
         var webViewSensitive = false
         walk(root, marks, nodes, pageTexts, 0, { hasWebView = true }, { webViewSensitive = true })
+        lastScanHasWebView = hasWebView
         if (marks.isEmpty()) {
             return ScreenResult("", "a11y", true, nodes, null, pageTexts, currentPackage(root), inSensitiveSession)
         }

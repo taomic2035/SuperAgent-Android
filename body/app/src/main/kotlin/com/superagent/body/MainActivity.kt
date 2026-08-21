@@ -107,7 +107,16 @@ class MainActivity : AppCompatActivity() {
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == REQ_CAPTURE) refreshStatus()
+        if (requestCode == REQ_CAPTURE) {
+            // C-03：授权结果必须 attach 到 ScreenshotService——否则 MediaProjection 拿了许可
+            // 却没挂起虚拟屏，视觉链（L1/L2）入口死路（docs/16 §6）
+            val svc = com.superagent.body.core.screenshot.ScreenshotService.shared
+            if (svc != null && data != null) {
+                val ok = runCatching { svc.attach(resultCode, data) }.getOrDefault(false)
+                android.util.Log.i("MainActivity", "屏幕捕获 attach：$ok")
+            }
+            refreshStatus()
+        }
     }
 
     companion object {

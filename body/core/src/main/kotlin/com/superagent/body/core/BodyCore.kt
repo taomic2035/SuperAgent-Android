@@ -106,8 +106,8 @@ class BodyCore(
                     val a11yScreen = perceiver.perceive("a11y", sensitiveSession.inSensitiveSession)
                     sensitiveSession.onForeground(a11yScreen.appPackage)
                     val nodeCount = a11yScreen.marks?.size ?: 0
-                    val hasWebView = a11yScreen.nodes.orEmpty().any { it.label.contains("WebView", ignoreCase = true) }
-                    if (nodeCount >= 5 && !hasWebView) {
+                    // C-04：改读 perceiver 结构化信号（walk 时 class 判定），弃 label 字符串匹配
+                    if (nodeCount >= 5 && !perceiver.lastScanHasWebView) {
                         return@rpc ok(req, a11yScreen)
                     }
                     // a11y 不足——落入 vision 路径
