@@ -107,7 +107,9 @@ async function main(): Promise<void> {
     if (!failureReflector) return
     try {
       const run = getRun()
-      void failureReflector({ goal: run.goal, error, tools: run.trace.map((s) => s.tool) })
+      // G2-05 防御纪律：fire-and-forget 显式吞 rejection——reflector 内部虽已全 catch，
+      // 但不依赖全局 unhandledRejection handler（它会 finishRun("crashed") 误伤下一个任务的 runState）
+      void failureReflector({ goal: run.goal, error, tools: run.trace.map((s) => s.tool) }).catch(() => undefined)
     } catch {
       /* run 未初始化等：跳过 */
     }

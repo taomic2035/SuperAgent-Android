@@ -59,6 +59,25 @@ class MemoryStoreTest {
     }
 
     @Test
+    fun `G2-01 含身份证或卡号拒绝入库`() {
+        assertThrows<IllegalArgumentException> {
+            store.write("fact", "证件", "身份证号 110101199003077758", "user-told")
+        }
+        assertThrows<IllegalArgumentException> {
+            store.write("fact", "卡", "银行卡 6222020200112233345", "user-told")
+        }
+        assertEquals(0, db.active().size)
+    }
+
+    @Test
+    fun `G2-01 正常短数字内容不误伤`() {
+        val r = store.write("preference", "音量", "播报音量 30", "user-told")
+        assertFalse(r.merged)
+        assertTrue(MemoryStore.containsPii("卡号 6222020200112233345"))
+        assertFalse(MemoryStore.containsPii("音量 30，延迟 1.5s"))
+    }
+
+    @Test
     fun `同内容重述强化 confidence 上限 1 点 0`() {
         store.write("preference", "奶茶口味", "少糖", "run:点奶茶", 0.5)
         val r = store.write("preference", "奶茶口味", "少糖", "run:点奶茶")

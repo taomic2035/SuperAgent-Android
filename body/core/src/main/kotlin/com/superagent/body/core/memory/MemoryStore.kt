@@ -175,6 +175,7 @@ class MemoryStore(private val db: MemoryDb) {
         require(c.isNotEmpty()) { "content 不能为空" }
         val src = source.trim()
         require(src.isNotEmpty()) { "source 不能为空" }
+        require(!containsPii(t) && !containsPii(c)) { "内容含疑似身份证/银行卡号，拒绝入库（隐私红线）" }
 
         val now = System.currentTimeMillis()
         val existing = db.active().firstOrNull { it.kind == k && it.topic == t }
@@ -256,9 +257,15 @@ class MemoryStore(private val db: MemoryDb) {
         )
 
     companion object {
-        private val KINDS = setOf("fact", "preference", "lesson", "routine")
+        val KINDS = setOf("fact", "preference", "lesson", "routine")
         const val MAX_TOPIC = 32
         const val MAX_CONTENT = 200
         const val MAX_SOURCE = 80
+
+        // G2-01 纵深防御（BR-04.4 首块）：写入侧不信任调用方——brain 侧 reflect/lessons/remember
+        // 已有 redact 前置，此处兜底拦截 PII 直接入库（身份证 18 位 / 银行卡 15-19 位数字串）
+        private val ID_CARD = Regex("""\d{17}[\dXx]""")
+        private val CARD_NUMBER = Regex("""\b\d{15,19}\b""")
+        fun containsPii(text: String): Boolean = ID_CARD.containsMatchIn(text) || CARD_NUMBER.containsMatchIn(text)
     }
 }

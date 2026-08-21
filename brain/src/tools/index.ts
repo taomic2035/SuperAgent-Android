@@ -537,7 +537,8 @@ export function buildTools(
         finishRun("success")
         // ME-2 反思提取（docs/15 §5）：证据核验通过后异步入库——fire-and-forget，绝不阻塞任务完成
         if (reflect) {
-          void reflect({ goal: run.goal, summary: params.summary, tools: locatedSteps.map((s) => s.tool) })
+          // G2-05 防御纪律：显式吞 rejection，不依赖全局 unhandledRejection handler（会误写 crashed 终态）
+          void reflect({ goal: run.goal, summary: params.summary, tools: locatedSteps.map((s) => s.tool) }).catch(() => undefined)
         }
         return {
           content: [{ type: "text", text: `任务完成：${params.summary}` }],
