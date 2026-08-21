@@ -30,8 +30,9 @@ export function redactText(text: string): string {
 }
 
 export function redactScreen(screen: ScreenResult): ScreenResult {
+  const { visionActionToken: _visionActionToken, ...publicScreen } = screen
   return {
-    ...screen,
+    ...publicScreen,
     pageTexts: screen.pageTexts?.map(redactText),
     marks: screen.marks?.map((m) => ({ ...m, text: redactText(m.text) })),
     nodes: screen.nodes?.map((n) => ({ ...n, label: redactText(n.label) })),

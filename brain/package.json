@@ -19,6 +19,7 @@
     "integration": "tsx test/integration.ts",
     "resume-coordinator": "tsx --test test/resume-coordinator.ts",
     "vision-fallback": "tsx test/vision-fallback.ts",
+    "vision-action-context": "tsx test/vision-action-context.ts",
     "tts-chain": "tsx test/tts-online-chain.ts",
     "command-pump": "tsx test/command-pump.ts",
     "memory-backup": "tsx src/memory/backup-cli.ts backup",

@@ -30,6 +30,7 @@ import type { Persona } from "../personas/promptBuilder.ts"
 import type { Reflector } from "../memory/reflect.ts"
 import { commitBoundaryLesson, recordLesson, skillStaleLesson } from "../memory/lessons.ts"
 import { redactScreen, redactText } from "../guards/redact.ts"
+import { VisionActionProvenance } from "../guards/vision-action-context.ts"
 import { speak } from "../tts/index.ts"
 
 function idem(tool: string, toolCallId: string): string {
@@ -40,6 +41,11 @@ function idem(tool: string, toolCallId: string): string {
 const HITL_RPC_TIMEOUT_MS = 90_000
 const SPEECH_RPC_TIMEOUT_MS = 75_000
 const SKILL_RUN_RPC_TIMEOUT_MS = 150_000
+
+function hideVisionActionToken<T extends object>(value: T): Omit<T, "visionActionToken"> {
+  const { visionActionToken: _visionActionToken, ...visible } = value as T & { visionActionToken?: unknown }
+  return visible
+}
 
 export async function resolveVisionScreen(
   screen: ScreenResult,
@@ -106,6 +112,7 @@ export function buildTools(
   reflect?: Reflector,
 ): AgentTool<any>[] {
   const personaMap = new Map(Object.entries(personas))
+  const visionActionProvenance = new VisionActionProvenance()
 
   return [
     {
@@ -123,6 +130,7 @@ export function buildTools(
           vision,
           () => body.rpc<ScreenResult>("perceive.screen", { mode: "a11y" }),
         )
+        visionActionProvenance.observe(enriched, getRun().startedAt)
         setBaseline(enriched)
         // BR-04.4：raw 只进 runState；进模型上下文的 content 打码（signature/基线/证据核验仍用 raw）
         return { content: [{ type: "text", text: JSON.stringify(redactScreen(enriched)) }], details: { signature: enriched.signature } }
@@ -137,9 +145,9 @@ export function buildTools(
         y: Type.Number({ description: "像素纵坐标" }),
       }),
       execute: async (toolCallId, params: any) => {
-        const result = await body.rpc<ActionResult>("control.tap", params, idem("control.tap", toolCallId))
+        const result = await body.rpc<ActionResult>("control.tap", visionActionProvenance.attach(params, getRun().startedAt), idem("control.tap", toolCallId))
         if (!result.located) throw new Error(result.note ?? "点击未命中任何可交互元素，请重新感知屏幕")
-        return { content: [{ type: "text", text: `已点击 (${params.x}, ${params.y})` }], details: result }
+        return { content: [{ type: "text", text: `已点击 (${params.x}, ${params.y})` }], details: hideVisionActionToken(result) }
       },
     },
     {
@@ -152,9 +160,9 @@ export function buildTools(
         durationMs: Type.Optional(Type.Number()),
       }),
       execute: async (toolCallId, params: any) => {
-        const result = await body.rpc<ActionResult>("control.longPress", params, idem("control.longPress", toolCallId))
+        const result = await body.rpc<ActionResult>("control.longPress", visionActionProvenance.attach(params, getRun().startedAt), idem("control.longPress", toolCallId))
         if (!result.located) throw new Error(result.note ?? "长按未命中，请重新感知")
-        return { content: [{ type: "text", text: "长按完成" }], details: result }
+        return { content: [{ type: "text", text: "长按完成" }], details: hideVisionActionToken(result) }
       },
     },
     {
@@ -169,8 +177,8 @@ export function buildTools(
         durationMs: Type.Optional(Type.Number()),
       }),
       execute: async (toolCallId, params: any) => {
-        const result = await body.rpc<ActionResult>("control.swipe", params, idem("control.swipe", toolCallId))
-        return { content: [{ type: "text", text: "滑动完成" }], details: result }
+        const result = await body.rpc<ActionResult>("control.swipe", visionActionProvenance.attach(params, getRun().startedAt), idem("control.swipe", toolCallId))
+        return { content: [{ type: "text", text: "滑动完成" }], details: hideVisionActionToken(result) }
       },
     },
     {
@@ -197,7 +205,7 @@ export function buildTools(
       execute: async (toolCallId, params: any) => {
         let result: ActionResult
         try {
-          result = await body.rpc<ActionResult>("control.selectOption", params, idem("control.selectOption", toolCallId))
+          result = await body.rpc<ActionResult>("control.selectOption", visionActionProvenance.attach(params, getRun().startedAt), idem("control.selectOption", toolCallId))
         } catch (err) {
           if (err instanceof BodyRpcError && err.code === "COMMIT_BOUNDARY") {
             // ME-3a：gate 拦截 → lesson 自动采集（fire-and-forget，不吞原错误语义）
@@ -213,7 +221,7 @@ export function buildTools(
           throw err
         }
         if (!result.located) throw new Error(result.note ?? `未找到可见文字「${params.label}」`)
-        return { content: [{ type: "text", text: `已点选「${params.label}」` }], details: result }
+        return { content: [{ type: "text", text: `已点选「${params.label}」` }], details: hideVisionActionToken(result) }
       },
     },
     {
@@ -225,9 +233,9 @@ export function buildTools(
         near: Type.Optional(Type.Object({ x: Type.Number(), y: Type.Number() })),
       }),
       execute: async (toolCallId, params: any) => {
-        const result = await body.rpc<ActionResult>("control.selectSpec", params, idem("control.selectSpec", toolCallId))
+        const result = await body.rpc<ActionResult>("control.selectSpec", visionActionProvenance.attach(params, getRun().startedAt), idem("control.selectSpec", toolCallId))
         if (!result.located) throw new Error(result.note ?? `规格「${params.label}」点选未生效（选中态校验失败）`)
-        return { content: [{ type: "text", text: `已选中规格「${params.label}」` }], details: result }
+        return { content: [{ type: "text", text: `已选中规格「${params.label}」` }], details: hideVisionActionToken(result) }
       },
     },
     {
@@ -529,6 +537,7 @@ export function buildTools(
         evidence: Type.String({ description: "屏幕上的证据文字" }),
       }),
       execute: async (_id, params: any) => {
+        try {
         const run = getRun()
         const screen = await body.rpc<ScreenResult>("perceive.screen", { mode: "auto" })
         const verdict = verifyEvidence(screen, run.baselineScreen, params.evidence)
@@ -582,6 +591,9 @@ export function buildTools(
         return {
           content: [{ type: "text", text: `任务完成：${params.summary}` }],
           details: { evidenceVerified: true, traceSteps: locatedSteps.length, learned, learnError },
+        }
+        } finally {
+          visionActionProvenance.clear()
         }
       },
     },
