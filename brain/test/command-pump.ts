@@ -1,5 +1,5 @@
 /**
- * S6-③ command pump 单测（mock body——领取/异常/残留 reconcile/控制类路由）。
+ * S6-③ command pump 单测（裁决版语义：claimNext/accept/settle + 保护文本 + INTERRUPTED）。
  */
 import assert from "node:assert/strict"
 import type { BodyClient } from "../src/ipc/client.ts"
@@ -11,91 +11,114 @@ function ok(name: string): void {
   console.log(`  ✓ ${name}`)
 }
 
+function protect(text: string): string {
+  return Buffer.from(text, "base64").toString("base64") === text ? text : Buffer.from(text, "utf8").toString("base64")
+}
+
 function mockBody(): {
   client: BodyClient
   commands: JournalCommand[]
-  marks: Array<{ commandId: string; status: string }>
-  claims: string[]
+  settles: Array<{ commandId: string; status: string; taskId: string | null }>
+  binds: string[]
 } {
   const commands: JournalCommand[] = []
-  const marks: Array<{ commandId: string; status: string }> = []
-  const claims: string[] = []
+  const settles: Array<{ commandId: string; status: string; taskId: string | null }> = []
+  const binds: string[] = []
   const client = {
     rpc: async (method: string, params: Record<string, unknown>) => {
       if (method === "command.list") {
-        const since = (params.sinceId as number) ?? 0
-        return { commands: commands.filter((c) => c.id > since).sort((a, b) => b.id - a.id) }
+        const after = (params.afterRowId as number) ?? 0
+        return { commands: commands.filter((c) => c.id > after).sort((a, b) => b.id - a.id) }
       }
-      if (method === "command.claim") {
+      if (method === "command.claimNext") {
         const cid = params.commandId as string
-        claims.push(cid)
         const c = commands.find((x) => x.commandId === cid)
-        if (!c || c.status !== "QUEUED") return { accepted: false, reason: "状态不可领" }
-        c.status = "ACCEPTED"
-        c.brainSession = params.brainSession as string
-        return { accepted: true }
+        if (!c || c.status !== "QUEUED") return { claimed: false, reason: "状态不可领" }
+        c.status = "CLAIMED"
+        c.brainSession = params.brainSessionId as string
+        return { claimed: true, protectedText: c.protectedText }
       }
-      if (method === "command.mark") {
+      if (method === "command.accept") {
+        binds.push(params.commandId as string)
+        const c = commands.find((x) => x.commandId === params.commandId)
+        if (c) { c.status = "ACCEPTED"; c.taskId = params.taskId as string }
+        return { ok: true }
+      }
+      if (method === "command.settle") {
         const c = commands.find((x) => x.commandId === params.commandId)
         if (c) c.status = params.status as string
-        marks.push({ commandId: params.commandId as string, status: params.status as string })
+        settles.push({ commandId: params.commandId as string, status: params.status as string, taskId: (params.taskId as string | null) ?? null })
         return { ok: true }
       }
       throw new Error(`未模拟方法 ${method}`)
     },
   } as unknown as BodyClient
-  return { client, commands, marks, claims }
+  return { client, commands, settles, binds }
 }
 
 async function main(): Promise<void> {
-  console.log("== S6-③ command pump ==")
+  console.log("== S6-③ command pump（裁决版）==")
 
-  // 1. QUEUED 命令被领取执行并 RESOLVED；水位推进不重复消费
+  // 1. text 命令全链：claimNext→onCommand(返回 taskId)→accept→settle RESOLVED；保护文本解出
   {
     const m = mockBody()
-    m.commands.push({ id: 1, commandId: "cmd-a", kind: "text", text: "打开设置", status: "QUEUED" })
-    const executed: string[] = []
+    m.commands.push({ id: 1, commandId: "cmd-a", kind: "text", protectedText: protect("打开设置"), status: "QUEUED" })
+    const seenText: string[] = []
     const pump = buildCommandPump(m.client, {
-      onCommand: async (c) => { executed.push(c.text) },
+      onCommand: async (_c, text) => { seenText.push(text); return "task-1" },
       session: () => "boot-1",
-      intervalMs: 10,
     })
-    await pump.reconcileOnce()
-    // 手动驱动一轮：list→runOne（不 start 循环，直接模拟 loop 内核行为）
-    const listRes = await m.client.rpc("command.list", { sinceId: 0 }) as { commands: JournalCommand[] }
-    for (const c of listRes.commands) {
-      if (c.status === "QUEUED") {
-        const claimRes = await m.client.rpc("command.claim", { commandId: c.commandId, brainSession: "boot-1" }) as { accepted: boolean }
-        assert.ok(claimRes.accepted)
-        executed.push(c.text)
-        await m.client.rpc("command.mark", { commandId: c.commandId, status: "RESOLVED" })
-      }
-    }
-    assert.deepEqual(executed, ["打开设置"])
-    assert.ok(m.marks.some((x) => x.commandId === "cmd-a" && x.status === "RESOLVED"))
-    ok("QUEUED→claim→执行→RESOLVED 全链（mock 语义对齐 pump.runOne）")
-  }
-
-  // 2. 残留 reconcile：他 session 的 ACCEPTED → INTERRUPTED（禁自动重放）
-  {
-    const m = mockBody()
-    m.commands.push({ id: 1, commandId: "cmd-old", kind: "text", text: "上次崩溃任务", status: "ACCEPTED", brainSession: "boot-0" })
-    const pump = buildCommandPump(m.client, { onCommand: async () => {}, session: () => "boot-1" })
-    const n = await pump.reconcileOnce()
+    const n = await pump.drainOnce()
     assert.equal(n, 1)
-    assert.equal(m.commands[0].status, "INTERRUPTED")
-    ok("crash 残留（他 session ACCEPTED）→ INTERRUPTED 人工核对")
+    assert.deepEqual(seenText, ["打开设置"], "保护文本在 brain 侧解出原文")
+    assert.deepEqual(m.binds, ["cmd-a"], "taskId 经 accept 绑定")
+    assert.equal(m.settles[0].status, "RESOLVED")
+    assert.equal(m.settles[0].taskId, "task-1")
+    ok("text 命令：claimNext→解保护→onCommand→accept(taskId)→settle RESOLVED")
   }
 
-  // 3. 本 session 的 ACCEPTED 不误标（正常运行中）
+  // 2. 执行异常 → INTERRUPTED（禁自动重放），无 accept
   {
     const m = mockBody()
-    m.commands.push({ id: 1, commandId: "cmd-run", kind: "text", text: "正在跑", status: "ACCEPTED", brainSession: "boot-1" })
-    const pump = buildCommandPump(m.client, { onCommand: async () => {}, session: () => "boot-1" })
-    const n = await pump.reconcileOnce()
+    m.commands.push({ id: 1, commandId: "cmd-err", kind: "text", protectedText: protect("会失败"), status: "QUEUED" })
+    const pump = buildCommandPump(m.client, {
+      onCommand: async () => { throw new Error("执行中断") },
+      session: () => "boot-1",
+    })
+    await pump.drainOnce()
+    assert.equal(m.settles[0].status, "INTERRUPTED")
+    assert.deepEqual(m.binds, [], "异常路径不 bindTask")
+    ok("执行异常 → settle INTERRUPTED（副作用边界未知）")
+  }
+
+  // 3. 控制命令（stop）：无 taskId，直接 RESOLVED；水位推进后不重复消费
+  {
+    const m = mockBody()
+    m.commands.push({ id: 1, commandId: "cmd-stop", kind: "stop", protectedText: protect("停止"), status: "QUEUED" })
+    const kinds: string[] = []
+    const pump = buildCommandPump(m.client, {
+      onCommand: async (c) => { kinds.push(c.kind) },
+      session: () => "boot-1",
+    })
+    await pump.drainOnce()
+    assert.deepEqual(kinds, ["stop"])
+    assert.equal(m.settles[0].status, "RESOLVED")
+    assert.equal(m.settles[0].taskId, null)
+    // 再 drain：水位已过，不重复
+    const n2 = await pump.drainOnce()
+    assert.equal(n2, 0)
+    ok("控制命令直接 RESOLVED（无 taskId）；水位推进不重复消费")
+  }
+
+  // 4. claimNext 被拒（如租约他方）→ 不执行不 settle
+  {
+    const m = mockBody()
+    m.commands.push({ id: 1, commandId: "cmd-x", kind: "text", protectedText: protect("x"), status: "CLAIMED", brainSession: "other" })
+    const pump = buildCommandPump(m.client, { onCommand: async () => "t", session: () => "boot-1" })
+    // status=CLAIMED 非 QUEUED → drain 跳过（list 侧不进 runOne）
+    const n = await pump.drainOnce()
     assert.equal(n, 0)
-    assert.equal(m.commands[0].status, "ACCEPTED")
-    ok("本 session 运行中命令不误标")
+    ok("非 QUEUED 状态跳过（CLAIMED 他方/终态不重复执行）")
   }
 
   console.log(`\n${passed}/${passed} 通过 ✓`)
