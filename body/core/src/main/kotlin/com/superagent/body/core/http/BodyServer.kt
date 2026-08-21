@@ -159,18 +159,19 @@ class BodyServer(
                         }
                     } ?: RpcResponse.failure(request.id, "TIMEOUT", "handler 执行超时（服务侧取消）", "unknown_side_effect")
                 } finally {
-                    idempotentInFlight.remove(key)
-                    newFuture.complete(
-                        response ?: RpcResponse.failure(request.id, "BODY_ERROR", "handler 未产出结果"),
-                    )
-                    // C-10：全结果缓存（含失败/超时晚到）——幂等键语义 = 同 key 只执行一次，结果唯一
-                    if (idempotentResults.putIfAbsent(key, response!!) == null) {
+                    // S5/C10 复核（GPT）：结果必须先对新请求可见，再解除 in-flight——
+                    // 此前 remove(key) 先于 putIfAbsent，窗口期同 key 请求两处都看不到会二次执行副作用。
+                    // 顺序保证：put 缓存 → complete（等待者放行）→ remove in-flight，窗口关闭。
+                    val final = response ?: RpcResponse.failure(request.id, "BODY_ERROR", "handler 未产出结果")
+                    if (idempotentResults.putIfAbsent(key, final) == null) {
                         idempotentOrder.add(key)
                         while (idempotentOrder.size > MAX_IDEMPOTENT_ENTRIES) {
                             val oldest = idempotentOrder.poll() ?: break
                             idempotentResults.remove(oldest)
                         }
                     }
+                    newFuture.complete(final)
+                    idempotentInFlight.remove(key, newFuture)
                 }
             }
             val awaited = runCatching { newFuture.get(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS) }.getOrNull()
