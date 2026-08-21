@@ -1,5 +1,6 @@
 package com.superagent.body.core.memory
 
+import com.superagent.common.CommandRecord
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
@@ -36,10 +37,10 @@ class CommandStoreTest {
         ): Boolean = update(commandId, from, to, now, taskId, brainSession, leaseUntil)
 
         private fun update(commandId: String, from: CommandStatus, to: CommandStatus, now: Long, taskId: String?, brainSession: String?, leaseUntil: Long): Boolean {
-            val i = rows.indexOfFirst { it.commandId == commandId && it.status == from }
+            val i = rows.indexOfFirst { it.commandId == commandId && it.status == from.wire }
             if (i < 0) return false
             rows[i] = rows[i].copy(
-                status = to, updatedAt = now,
+                status = to.wire, updatedAt = now,
                 taskId = taskId ?: rows[i].taskId,
                 brainSession = brainSession ?: rows[i].brainSession,
                 leaseUntil = if (leaseUntil > 0) leaseUntil else rows[i].leaseUntil,
@@ -64,7 +65,7 @@ class CommandStoreTest {
         val r = store.reserve("text", "帮我点奶茶")
         val cid = (r as CommandStore.ReserveOutcome.Queued).commandId
         val rec = db.findByCommandId(cid)!!
-        assertEquals(CommandStatus.QUEUED, rec.status)
+        assertEquals("QUEUED", rec.status)
         assertNotEquals("帮我点奶茶", rec.protectedText, "存储禁明文")
         assertEquals("帮我点奶茶", CommandStore.unprotect(rec.protectedText), "可逆保护（P0 Base64 占位）")
     }
@@ -82,13 +83,13 @@ class CommandStoreTest {
         val c = store.claimNext(cid, "boot-1")
         assertTrue(c is CommandStore.ClaimOutcome.Claimed)
         val rec = db.findByCommandId(cid)!!
-        assertEquals(CommandStatus.CLAIMED, rec.status, "claim 后是 CLAIMED 不是 ACCEPTED")
+        assertEquals("CLAIMED", rec.status, "claim 后是 CLAIMED 不是 ACCEPTED")
         assertEquals("boot-1", rec.brainSession)
         assertTrue(rec.leaseUntil > System.currentTimeMillis(), "租约在位")
         // bindTask：正确 session 绑 taskId → ACCEPTED；错误 session 拒
         assertFalse(store.bindTask(cid, "task-9", "boot-2"))
         assertTrue(store.bindTask(cid, "task-9", "boot-1"))
-        assertEquals(CommandStatus.ACCEPTED, db.findByCommandId(cid)!!.status)
+        assertEquals("ACCEPTED", db.findByCommandId(cid)!!.status)
     }
 
     @Test
@@ -114,7 +115,7 @@ class CommandStoreTest {
         assertFalse(store.settle(cid, "task-1", "boot-2", CommandStatus.RESOLVED), "错 session 拒绝")
         assertFalse(store.settle(cid, "task-2", "boot-1", CommandStatus.RESOLVED), "错 taskId 拒绝")
         assertTrue(store.settle(cid, "task-1", "boot-1", CommandStatus.RESOLVED))
-        assertEquals(CommandStatus.RESOLVED, db.findByCommandId(cid)!!.status)
+        assertEquals("RESOLVED", db.findByCommandId(cid)!!.status)
     }
 
     @Test
@@ -134,14 +135,14 @@ class CommandStoreTest {
         db.rows.first { it.commandId == c }.let { db.rows[db.rows.indexOf(it)] = it.copy(expiresAt = System.currentTimeMillis() - 1) }
         val swept = store.sweepExpired()
         assertEquals(2, swept)
-        assertEquals(CommandStatus.REJECTED, db.findByCommandId(q)!!.status)
-        assertEquals(CommandStatus.INTERRUPTED, db.findByCommandId(c)!!.status, "已领取过期=副作用边界未知禁重放")
+        assertEquals("REJECTED", db.findByCommandId(q)!!.status)
+        assertEquals("INTERRUPTED", db.findByCommandId(c)!!.status, "已领取过期=副作用边界未知禁重放")
     }
 
     @Test
     fun `claimNext 过期 QUEUED 惰性转 REJECTED`() {
         val cid = (store.reserve("text", "旧", ttlMs = -1) as CommandStore.ReserveOutcome.Queued).commandId
         assertTrue(store.claimNext(cid, "b") is CommandStore.ClaimOutcome.Rejected)
-        assertEquals(CommandStatus.REJECTED, db.findByCommandId(cid)!!.status)
+        assertEquals("REJECTED", db.findByCommandId(cid)!!.status)
     }
 }

@@ -350,3 +350,64 @@ data class RunArchiveResult(
 data class RunListResult(
     val runs: List<RunRecord>,
 )
+
+// ── S6 command journal 契约（GPT 冻结设计 + 裁决；GLM 落型 2026-08-21）──
+
+/** 命令生命周期（LOCALLY_REJECTED 不入 journal，无此值）。 */
+@Serializable
+enum class CommandStatusWire(val wireValue: String) {
+    @SerialName("QUEUED") QUEUED("QUEUED"),
+    @SerialName("CLAIMED") CLAIMED("CLAIMED"),
+    @SerialName("ACCEPTED") ACCEPTED("ACCEPTED"),
+    @SerialName("WAITING_USER") WAITING_USER("WAITING_USER"),
+    @SerialName("RESOLVED") RESOLVED("RESOLVED"),
+    @SerialName("INTERRUPTED") INTERRUPTED("INTERRUPTED"),
+    @SerialName("REJECTED") REJECTED("REJECTED"),
+}
+
+@Serializable
+data class CommandRecord(
+    /** 内部 row_id（水位/游标）；业务身份是 commandId */
+    val id: Long,
+    /** Body 生成 UUID（不变量：禁 seq/文本推导） */
+    val commandId: String,
+    /** text | pause | resume | stop */
+    val kind: String,
+    /** 受保护文本（存储禁明文；P0 Base64 占位，P1 后本机保护） */
+    val protectedText: String,
+    val status: String,
+    val taskId: String? = null,
+    val brainSession: String? = null,
+    val createdAt: Long,
+    val updatedAt: Long,
+    val expiresAt: Long,
+    /** CLAIMED 租约到点（过期 CLAIMED 可被接管） */
+    val leaseUntil: Long = 0,
+)
+
+@Serializable
+data class CommandReserveReceipt(
+    /** QUEUED 回执；本地拒绝（未入 journal）时 commandId 为空、reason 必填 */
+    val commandId: String? = null,
+    val reason: String? = null,
+)
+
+@Serializable
+data class CommandClaimEnvelope(
+    val claimed: Boolean,
+    /** claimed=true 时给出受保护文本（合法领取者在 brain 侧解保护） */
+    val protectedText: String? = null,
+    val reason: String? = null,
+)
+
+@Serializable
+data class CommandSettleResult(
+    val ok: Boolean,
+    val reason: String? = null,
+)
+
+@Serializable
+data class CommandListResult(
+    val commands: List<CommandRecord>,
+)
+

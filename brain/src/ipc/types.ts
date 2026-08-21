@@ -251,3 +251,39 @@ export interface RunArchiveResult {
 export interface RunListResult {
   runs: RunRecord[]
 }
+
+// ── S6 command journal 契约（与 Protocol.kt/contract.json 镜像）──
+export interface CommandRecord {
+  id: number
+  commandId: string
+  kind: "text" | "pause" | "resume" | "stop" | string
+  /** 受保护文本（P0 Base64；brain 侧 unprotect） */
+  protectedText: string
+  status: "QUEUED" | "CLAIMED" | "ACCEPTED" | "WAITING_USER" | "RESOLVED" | "INTERRUPTED" | "REJECTED" | string
+  taskId?: string | null
+  brainSession?: string | null
+  createdAt: number
+  updatedAt: number
+  expiresAt: number
+  leaseUntil?: number
+}
+
+export interface CommandReserveReceipt {
+  commandId?: string | null
+  reason?: string | null
+}
+
+export interface CommandClaimEnvelope {
+  claimed: boolean
+  protectedText?: string | null
+  reason?: string | null
+}
+
+export interface CommandSettleResult {
+  ok: boolean
+  reason?: string | null
+}
+
+export interface CommandListResult {
+  commands: CommandRecord[]
+}

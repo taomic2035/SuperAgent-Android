@@ -1,44 +1,10 @@
 package com.superagent.body.core.memory
 
 import android.content.ContentValues
-import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import com.superagent.common.CommandRecord
 import java.util.UUID
-
-/**
- * journal 记录（P0 自含定义；正式入契约 Protocol.kt/contract.json 待 GPT P1 定稿后搬迁——
- * 字段面已在 handoff 方案请求中报 GPT）。
- */
-data class CommandRecord(
-    /** 内部 row_id（cursor/水位用）；业务身份是 commandId */
-    val id: Long,
-    /** Body 生成的 UUID（不变量：禁 seq/文本推导） */
-    val commandId: String,
-    /** text | pause | resume | stop */
-    val kind: String,
-    /** 受保护文本（GPT 裁决：存储禁明文。P0 占位 Base64，P1 契合后换本机保护方案） */
-    val protectedText: String,
-    val status: CommandStatus,
-    val taskId: String?,
-    val brainSession: String?,
-    val createdAt: Long,
-    val updatedAt: Long,
-    val expiresAt: Long,
-    /** CLAIMED 租约到点（GPT 裁决：claim 写 lease_until；过期 CLAIMED 可被再领取） */
-    val leaseUntil: Long = 0,
-)
-
-/** 冻结设计 §2 + GPT 裁决（CLAIMED≠ACCEPTED 分离）。LOCALLY_REJECTED 不入 journal。 */
-enum class CommandStatus {
-    QUEUED,       // Body 已持久保存（用户可见：已排队·等待大脑确认）
-    CLAIMED,      // Brain 领取中（写 brain_session_id + lease_until）——不是用户可见 accepted
-    ACCEPTED,     // bindTask 成功（prompt_start 已发）——用户可见「理解中」
-    WAITING_USER, // 暂停/阻塞/HITL
-    RESOLVED,     // 持久终态
-    INTERRUPTED,  // 副作用边界未知（crash/超时放弃）——禁自动重放，人工核对
-    REJECTED,     // 过期/策略拒绝（receipt 留痕）
-}
 
 /**
  * S6-BR10/CT06 command journal（docs/superpowers/specs/2026-08-21-command-ack-design.md §2/§4，设计 GPT 冻结）：
@@ -128,7 +94,7 @@ class AndroidSqliteCommandDb(private val helper: SQLiteOpenHelper) : CommandDb {
         put("kind", r.kind)
         put("protected_text", r.protectedText)
         put("lease_until", r.leaseUntil)
-        put("status", r.status.name)
+        put("status", r.status)
         put("task_id", r.taskId)
         put("brain_session", r.brainSession)
         put("created_at", r.createdAt)
@@ -142,7 +108,7 @@ class AndroidSqliteCommandDb(private val helper: SQLiteOpenHelper) : CommandDb {
         commandId = c.getString(c.getColumnIndexOrThrow("command_id")),
         kind = c.getString(c.getColumnIndexOrThrow("kind")),
         protectedText = c.getString(c.getColumnIndexOrThrow("protected_text")),
-        status = CommandStatus.valueOf(c.getString(c.getColumnIndexOrThrow("status"))),
+        status = c.getString(c.getColumnIndexOrThrow("status")),
         taskId = c.getString(c.getColumnIndexOrThrow("task_id")),
         brainSession = c.getString(c.getColumnIndexOrThrow("brain_session")),
         createdAt = c.getLong(c.getColumnIndexOrThrow("created_at")),
@@ -167,8 +133,16 @@ class AndroidSqliteCommandDb(private val helper: SQLiteOpenHelper) : CommandDb {
     }
 }
 
-/** journal 逻辑层：reserve/claim/resolve 状态机（JVM 单测用内存 fake 全覆盖）。 */
+/** 内部状态机枚举（与契约 CommandStatusWire 一一对应；DB 存 wireValue 字符串）。 */
+enum class CommandStatus {
+    QUEUED, CLAIMED, ACCEPTED, WAITING_USER, RESOLVED, INTERRUPTED, REJECTED;
+    val wire: String get() = name
+    companion object { fun fromWire(v: String): CommandStatus? = entries.firstOrNull { it.name == v } }
+}
+
+/** journal 逻辑层：reserve/claimNext/bindTask/settle/sweep 状态机（GPT 裁决版）。 */
 class CommandStore(private val db: CommandDb) {
+    private fun statusOf(r: CommandRecord): CommandStatus = CommandStatus.fromWire(r.status) ?: CommandStatus.REJECTED
 
     sealed interface ReserveOutcome {
         /** 已入 journal（QUEUED）——commandId 为 Body 生成 UUID */
@@ -194,7 +168,7 @@ class CommandStore(private val db: CommandDb) {
             CommandRecord(
                 id = 0, commandId = commandId, kind = k,
                 protectedText = protect(t), // GPT 裁决：存储禁明文（P0 Base64 占位，P1 换本机保护）
-                status = CommandStatus.QUEUED, taskId = null, brainSession = null,
+                status = CommandStatus.QUEUED.wire, taskId = null, brainSession = null,
                 createdAt = now, updatedAt = now, expiresAt = now + ttlMs,
             ),
         )
@@ -217,7 +191,7 @@ class CommandStore(private val db: CommandDb) {
         val rec = db.findByCommandId(commandId) ?: return ClaimOutcome.Rejected("commandId 不存在")
         val now = System.currentTimeMillis()
         val expired = rec.expiresAt in 1 until now
-        when (rec.status) {
+        when (statusOf(rec)) {
             CommandStatus.QUEUED -> {
                 if (expired) {
                     db.compareAndUpdateStatus(commandId, CommandStatus.QUEUED, CommandStatus.REJECTED, now)
@@ -246,14 +220,14 @@ class CommandStore(private val db: CommandDb) {
                 }
                 return ClaimOutcome.Rejected("租约期内他方持有")
             }
-            else -> return ClaimOutcome.Rejected("当前状态 ${rec.status} 不可领取")
+            else -> return ClaimOutcome.Rejected("当前状态 ${statusOf(rec)} 不可领取")
         }
     }
 
     /** bindTask（GPT 裁决）：CLAIMED→ACCEPTED 原子绑定 taskId——此后 prompt_start 才用户可见。 */
     fun bindTask(commandId: String, taskId: String, brainSession: String): Boolean {
         val rec = db.findByCommandId(commandId) ?: return false
-        if (rec.status != CommandStatus.CLAIMED || rec.brainSession != brainSession) return false
+        if (statusOf(rec) != CommandStatus.CLAIMED || rec.brainSession != brainSession) return false
         return db.compareAndUpdateStatus(commandId, CommandStatus.CLAIMED, CommandStatus.ACCEPTED, System.currentTimeMillis(), taskId = taskId)
     }
 
@@ -263,11 +237,12 @@ class CommandStore(private val db: CommandDb) {
         if (rec.brainSession != null && rec.brainSession != brainSession) return false
         if (rec.taskId != null && taskId != null && rec.taskId != taskId) return false
         val now = System.currentTimeMillis()
-        val legal = (rec.status == CommandStatus.ACCEPTED && to in ACCEPTED_NEXTS) ||
-            (rec.status == CommandStatus.WAITING_USER && to in WAITING_NEXTS) ||
-            (rec.status == CommandStatus.INTERRUPTED && to == CommandStatus.RESOLVED)
+        val st = statusOf(rec)
+        val legal = (st == CommandStatus.ACCEPTED && to in ACCEPTED_NEXTS) ||
+            (st == CommandStatus.WAITING_USER && to in WAITING_NEXTS) ||
+            (st == CommandStatus.INTERRUPTED && to == CommandStatus.RESOLVED)
         if (!legal) return false
-        return db.compareAndUpdateStatus(commandId, rec.status, to, now)
+        return db.compareAndUpdateStatus(commandId, st, to, now)
     }
 
     /** 惰性清扫（GPT 裁决 D2：入口含 claim 与 list/reconcile）——返回清扫数。 */
@@ -277,10 +252,10 @@ class CommandStore(private val db: CommandDb) {
         for (rec in db.list(0, 200)) {
             val expired = rec.expiresAt in 1 until now
             when {
-                rec.status == CommandStatus.QUEUED && expired -> {
+                statusOf(rec) == CommandStatus.QUEUED && expired -> {
                     if (db.compareAndUpdateStatus(rec.commandId, CommandStatus.QUEUED, CommandStatus.REJECTED, now)) swept++
                 }
-                rec.status == CommandStatus.CLAIMED && expired -> {
+                statusOf(rec) == CommandStatus.CLAIMED && expired -> {
                     // 已领取但过期：副作用边界可能未知（brain 失联）——INTERRUPTED 禁自动重放
                     if (db.compareAndUpdateStatus(rec.commandId, CommandStatus.CLAIMED, CommandStatus.INTERRUPTED, now)) swept++
                 }

@@ -370,6 +370,61 @@
         "decayed",
         "archived"
       ]
+    },
+    "CommandRecord": {
+      "fields": [
+        "id",
+        "commandId",
+        "kind",
+        "protectedText",
+        "status",
+        "taskId",
+        "brainSession",
+        "createdAt",
+        "updatedAt",
+        "expiresAt",
+        "leaseUntil"
+      ],
+      "optional": [
+        "taskId",
+        "brainSession",
+        "leaseUntil"
+      ]
+    },
+    "CommandReserveReceipt": {
+      "fields": [
+        "commandId",
+        "reason"
+      ],
+      "optional": [
+        "commandId",
+        "reason"
+      ]
+    },
+    "CommandClaimEnvelope": {
+      "fields": [
+        "claimed",
+        "protectedText",
+        "reason"
+      ],
+      "optional": [
+        "protectedText",
+        "reason"
+      ]
+    },
+    "CommandSettleResult": {
+      "fields": [
+        "ok",
+        "reason"
+      ],
+      "optional": [
+        "reason"
+      ]
+    },
+    "CommandListResult": {
+      "fields": [
+        "commands"
+      ]
     }
   }
 }

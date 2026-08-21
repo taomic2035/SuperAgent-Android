@@ -63,6 +63,9 @@ class BodyCore(
     private val memoryDb = com.superagent.body.core.memory.AndroidSqliteMemoryDb(context)
     private val memories = com.superagent.body.core.memory.MemoryStore(memoryDb)
     private val runArchive = com.superagent.body.core.memory.RunArchiveStore(memoryDb)
+    private val commands = com.superagent.body.core.memory.CommandStore(
+        com.superagent.body.core.memory.AndroidSqliteCommandDb(memoryDb as android.database.sqlite.SQLiteOpenHelper),
+    )
     private val blobsDir = File(context.filesDir, "blobs")
     private val screenshots = com.superagent.body.core.screenshot.ScreenshotService(context).also {
         com.superagent.body.core.screenshot.ScreenshotService.shared = it
@@ -487,6 +490,57 @@ class BodyCore(
         // ME-6 生命周期维护（docs/15 §8.2）：衰减 + 容量治理——brain 月度触发
         server.rpc("memory.maintain") { req ->
             ok(req, memories.maintain())
+        }
+
+        // ── S6 command journal RPC（GPT 冻结设计 + 裁决最小面；GLM 注册）──
+        server.rpc("command.reserve") { req ->
+            val p = params(req)
+            val kind = p.string("kind") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 kind")
+            val text = p.string("text") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 text")
+            // 注意：入参 text 为明文（调用方在 UI 进程内），入库前 protect；本地拒绝不入 journal
+            when (val r = commands.reserve(kind, text)) {
+                is com.superagent.body.core.memory.CommandStore.ReserveOutcome.Queued ->
+                    ok(req, com.superagent.common.CommandReserveReceipt(commandId = r.commandId))
+                is com.superagent.body.core.memory.CommandStore.ReserveOutcome.LocallyRejected ->
+                    ok(req, com.superagent.common.CommandReserveReceipt(reason = r.reason))
+            }
+        }
+        server.rpc("command.claimNext") { req ->
+            val p = params(req)
+            val cid = p.string("commandId") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 commandId")
+            val session = p.string("brainSessionId") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 brainSessionId")
+            when (val r = commands.claimNext(cid, session, p.long("leaseMs") ?: 60_000)) {
+                is com.superagent.body.core.memory.CommandStore.ClaimOutcome.Claimed ->
+                    ok(req, com.superagent.common.CommandClaimEnvelope(claimed = true, protectedText = r.text))
+                is com.superagent.body.core.memory.CommandStore.ClaimOutcome.Rejected ->
+                    ok(req, com.superagent.common.CommandClaimEnvelope(claimed = false, reason = r.reason))
+            }
+        }
+        server.rpc("command.accept") { req ->
+            val p = params(req)
+            val cid = p.string("commandId") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 commandId")
+            val taskId = p.string("taskId") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 taskId")
+            val session = p.string("brainSessionId") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 brainSessionId")
+            val okRes = commands.bindTask(cid, taskId, session)
+            ok(req, com.superagent.common.CommandSettleResult(ok = okRes, reason = if (okRes) null else "状态/会话不匹配"))
+        }
+        server.rpc("command.settle") { req ->
+            val p = params(req)
+            val cid = p.string("commandId") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 commandId")
+            val session = p.string("brainSessionId") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 brainSessionId")
+            val status = p.string("status") ?: return@rpc bad(req, "BAD_PARAMS", "缺少 status")
+            val st = com.superagent.body.core.memory.CommandStatus.fromWire(status)
+                ?: return@rpc bad(req, "BAD_PARAMS", "status 非法: $status")
+            // D2：settle 入口顺带惰性清扫
+            commands.sweepExpired()
+            val okRes = commands.settle(cid, p.string("taskId"), session, st)
+            ok(req, com.superagent.common.CommandSettleResult(ok = okRes, reason = if (okRes) null else "状态/会话/任务不匹配"))
+        }
+        server.rpc("command.list") { req ->
+            // D2：list 入口惰性清扫（过期 QUEUED→REJECTED / CLAIMED→INTERRUPTED）
+            commands.sweepExpired()
+            val p = params(req)
+            ok(req, com.superagent.common.CommandListResult(commands.list(p.long("afterRowId") ?: 0, p.int("limit") ?: 50)))
         }
 
         // ME-3b 情景层全量归档（docs/15 §3）：run 快照 SQLite 全量留存（不环形淘汰）
