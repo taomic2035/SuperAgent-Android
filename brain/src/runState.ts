@@ -9,7 +9,7 @@ import { join } from "node:path"
  * trace 单调序号、脱敏后落盘。pi AgentHarness/Session 不用（见 AD-05）。
  */
 
-export type RunOutcome = "success" | "failed" | "crashed" | "needs_human" | "closed"
+export type RunOutcome = "success" | "failed" | "crashed" | "needs_human" | "closed" | "paused"
 
 /**
  * closed（审计 P1-01）：模型口头收笔/对话型回合的终态——未经 task.finish 证据核验，
@@ -82,6 +82,7 @@ const RESUMABLE: Record<RunOutcome, boolean> = {
   crashed: true,
   needs_human: true,
   closed: false,
+  paused: true, // C-06：暂停可续（resume_request 自动断点续跑）
 }
 
 /** 标记 run 结束（成功/失败/崩溃都调），落盘全历史。成功时清证据驳回计数。

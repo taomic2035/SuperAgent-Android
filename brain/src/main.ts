@@ -243,10 +243,10 @@ async function main(): Promise<void> {
         return
       }
       // #26 暂停 settle：pause terminate 后 run 正常 resolve——必须报 paused（此前误报 success，
-      // UI 永远到不了 PAUSED）。runState 记 closed（暂停≠失败，不进失败反思）
+      // UI 永远到不了 PAUSED）。runState 记 paused（C-06：RESUMABLE.paused=true——resume_request 自动续跑）
       if (isPaused()) {
         reportFinish("paused", "已暂停")
-        finishRun("closed", "用户暂停")
+        finishRun("paused", "用户暂停")
         return
       }
       // P1-01 语义一致：finishVerified → success；否则 closed（对话型收笔≠失败，不吓用户）
@@ -349,7 +349,26 @@ async function main(): Promise<void> {
           console.log("[brain] 收到暂停请求，下一动作将等待恢复")
         } else if (kind === "resume_request") {
           resumeFromPause()
-          console.log("[brain] 收到恢复请求，继续执行")
+          // C-06 闭环：resume = 断点续跑——paused 终态的 run 经 buildResumeContext 重新 prompt
+          // （docs/16 §6 目标语义；TC-14 机制复用不新造状态。无可续 run 时诚实提示不假恢复）
+          if (hasResumableRun()) {
+            console.log("[brain] 收到恢复请求，自动续跑上次任务")
+            void enqueueTask(async () => {
+              const saved = resumeRun()
+              if (!saved) return
+              resetSensitiveSession()
+              try {
+                console.log(`[brain] 恢复任务「${saved.goal}」（已带 ${saved.trace.length} 步历史）`)
+                await promptAgent(buildResumeContext(saved))
+                finishRun(getRun().finishVerified ? "success" : "closed")
+              } catch (err) {
+                console.log(`[brain] 续跑失败：${err instanceof Error ? err.message : String(err)}`)
+                finishRun("crashed", err instanceof Error ? err.message : String(err))
+              }
+            })
+          } else {
+            console.log("[brain] 收到恢复请求（无可续任务——仅解除暂停标志）")
+          }
         } else if (kind === "barge_in") {
           // #33（G1-08）：打断播报 = 用户要说话——语音模式立即开新一轮收听；文字模式仅记日志
           if (VOICE_MODE) {

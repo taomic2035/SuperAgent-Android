@@ -30,7 +30,7 @@ class RunArchiveStore(private val db: RunArchiveDb) {
     ): RunArchiveResult {
         val g = goal.trim()
         require(g.isNotEmpty()) { "goal 不能为空" }
-        require(outcome in OUTCOMES) { "outcome 非法：$outcome（允许 success|failed|crashed|needs_human|closed）" }
+        require(outcome in OUTCOMES) { "outcome 非法：$outcome（允许 success|failed|crashed|needs_human|closed|paused）" }
         val now = System.currentTimeMillis()
         val record = RunRecord(
             id = 0,
@@ -49,7 +49,7 @@ class RunArchiveStore(private val db: RunArchiveDb) {
     fun list(limit: Int = 30): RunListResult = RunListResult(db.list(limit.coerceIn(1, 100)))
 
     companion object {
-        private val OUTCOMES = setOf("success", "failed", "crashed", "needs_human", "closed")
+        private val OUTCOMES = setOf("success", "failed", "crashed", "needs_human", "closed", "paused")
         const val MAX_GOAL = 128
         const val MAX_REASON = 160
         const val MAX_TRACE = 60

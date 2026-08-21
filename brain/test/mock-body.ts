@@ -265,7 +265,7 @@ export function startMockBody(options: MockBodyOptions): Promise<{ port: number;
       case "run.archive": {
         const p = (params as { goal?: string; outcome?: string; failureReason?: string; startedAt?: number; finishedAt?: number; memoriesInjected?: number }) ?? {}
         if (!p.goal || !p.outcome) return void sendJson(res, 200, fail("BAD_PARAMS", "缺少 goal/outcome"))
-        if (!["success", "failed", "crashed", "needs_human", "closed"].includes(p.outcome)) {
+        if (!["success", "failed", "crashed", "needs_human", "closed", "paused"].includes(p.outcome)) {
           return void sendJson(res, 200, fail("BAD_PARAMS", `outcome 非法: ${p.outcome}`))
         }
         const id = nextRunId++
