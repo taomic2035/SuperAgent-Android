@@ -6,7 +6,7 @@
 
 [![status](https://img.shields.io/badge/status-v0.1.0%20post--release%20audit-orange)]()
 [![license](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
-[![tests](https://img.shields.io/badge/tests-brain31%20%7C%20body81-brightgreen)]()
+[![tests](https://img.shields.io/badge/tests-brain31%20%7C%20body168-brightgreen)]()
 [![protocol](https://img.shields.io/badge/IPC-v2-orange)](docs/07-接口规格说明书.md)
 
 ---
@@ -131,7 +131,7 @@ bash scripts/fetch-models.sh   # 下载 sherpa-onnx .so + ASR/TTS/声纹模型�
 
 ```bash
 cd body
-./gradlew :common:test :core:testDebugUnitTest   # 当前 81 项 JVM 单测
+./gradlew :common:test :core:testDebugUnitTest   # 当前 168 项 JVM 单测
 ./gradlew :app:assembleDebug                     # Debug APK 当前约 1.01GB
 bash scripts/install.sh                          # 装机 + token 桥接
 ```
@@ -159,7 +159,7 @@ BODY_URL=http://127.0.0.1:8765 BODY_TOKEN=$(adb shell run-as com.superagent.body
 | IPC 契约 | `npm run contract` | 34 个共享类型一致 |
 | brain 行为 | `npm run smoke` | 25 项通过 |
 | brain 集成 | `npm run integration` | 6 项通过 |
-| body JVM | `:common:test :core:testDebugUnitTest` | 81 项通过 |
+| body JVM | `:common:test :core:testDebugUnitTest` | 168 项通过 |
 | APK 构建 | `:app:assembleDebug` | 本轮通过 |
 | 真机 | 装机验收 | 本轮尚未复验 |
 
