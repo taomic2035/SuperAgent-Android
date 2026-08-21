@@ -36,10 +36,8 @@ class BodyServer(
 
     private val handlers = ConcurrentHashMap<String, Handler>()
     private val handlerTimeouts = ConcurrentHashMap<String, Long>()
-    private val idempotentResults = ConcurrentHashMap<String, RpcResponse>()
-    private val idempotentOrder = java.util.concurrent.ConcurrentLinkedQueue<String>()
-    /** 审计 P1-03：同 key 并发执行预留（共享首个执行结果，防重复手势/输入/启动） */
-    private val idempotentInFlight = ConcurrentHashMap<String, java.util.concurrent.CompletableFuture<RpcResponse>>()
+    /** S5：幂等缓存与 single-flight 下沉 KeyedSingleFlight（JVM 并发测试覆盖） */
+    private val singleFlight = KeyedSingleFlight(mutableMapOf<String, Any>(), MAX_IDEMPOTENT_ENTRIES)
 
     /** C-10（docs/16 §8）：结构化 scope 替代 GlobalScope——服务生命周期可整体取消 */
     private val serverScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -132,55 +130,38 @@ class BodyServer(
             return jsonResponse(RpcResponse.failure(0, "BAD_REQUEST", "JSON 解析失败: ${e.message}"), 400)
         }
         val key = request.idempotencyKey
-        if (key != null) {
-            idempotentResults[key]?.let { return jsonResponse(it) }
-        }
         val handler = handlers[request.method]
-            ?: return jsonResponse(RpcResponse.failure(request.id, "UNKNOWN_METHOD", "未知方法: ${request.method}"))
-        // 审计 P1-03 + C-10：同 key 并发/瞬时重试共享同一次执行；执行体在 serverScope 结构化运行，
-        // HTTP 线程带超时等待——超时即回 TIMEOUT（reason=unknown_side_effect，引导先 perceive 核实），
-        // 但执行继续跑完：真实结果写入幂等缓存，同 key 重试拿到第一次执行的真实结果而非二次执行。
+            ?: return jsonResponse(RpcResponse.failure(request.id, "UNKNOWN_METHOD", "未知方法: " + request.method))
+        // 审计 P1-03 + C-10 + S5：keyed single-flight（逻辑下沉 KeyedSingleFlight，JVM 并发测试覆盖）
+        // ——同 key 恰执行一次；超时回 TIMEOUT（unknown_side_effect）但执行继续，真实结果入缓存。
         if (key != null) {
-            val newFuture = java.util.concurrent.CompletableFuture<RpcResponse>()
-            val existing = idempotentInFlight.putIfAbsent(key, newFuture)
-            if (existing != null) {
-                val shared = runCatching { existing.get(35, java.util.concurrent.TimeUnit.SECONDS) }.getOrNull()
-                    ?: RpcResponse.failure(request.id, "TIMEOUT", "同 key 请求仍在执行（>35s）", "unknown_side_effect")
-                return jsonResponse(shared)
-            }
-            val timeoutMs = handlerTimeouts[request.method] ?: DEFAULT_HANDLER_TIMEOUT_MS
-            serverScope.launch {
-                var response: RpcResponse? = null
-                try {
-                    // 执行体给 handler 超时 + 5s 余量：慢动作最终完成并落缓存（幂等闭环）
-                    response = withTimeoutOrNull(timeoutMs + 5_000L) {
-                        runCatching { handler(request) }.getOrElse { e ->
-                            RpcResponse.failure(request.id, "BODY_ERROR", e.message ?: "handler error")
-                        }
-                    } ?: RpcResponse.failure(request.id, "TIMEOUT", "handler 执行超时（服务侧取消）", "unknown_side_effect")
-                } finally {
-                    // S5/C10 复核（GPT）：结果必须先对新请求可见，再解除 in-flight——
-                    // 此前 remove(key) 先于 putIfAbsent，窗口期同 key 请求两处都看不到会二次执行副作用。
-                    // 顺序保证：put 缓存 → complete（等待者放行）→ remove in-flight，窗口关闭。
-                    val final = response ?: RpcResponse.failure(request.id, "BODY_ERROR", "handler 未产出结果")
-                    if (idempotentResults.putIfAbsent(key, final) == null) {
-                        idempotentOrder.add(key)
-                        while (idempotentOrder.size > MAX_IDEMPOTENT_ENTRIES) {
-                            val oldest = idempotentOrder.poll() ?: break
-                            idempotentResults.remove(oldest)
-                        }
+            when (val entry = singleFlight.enter<RpcResponse>(key)) {
+                is KeyedSingleFlight.Entry.Cached -> return jsonResponse(entry.result)
+                is KeyedSingleFlight.Entry.Share -> {
+                    val shared = runCatching { entry.future.get(entry.timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS) }.getOrNull()
+                        ?: RpcResponse.failure(request.id, "TIMEOUT", "同 key 请求仍在执行（>${entry.timeoutMs / 1000}s）", "unknown_side_effect")
+                    return jsonResponse(shared)
+                }
+                is KeyedSingleFlight.Entry.Execute -> {
+                    val timeoutMs = handlerTimeouts[request.method] ?: DEFAULT_HANDLER_TIMEOUT_MS
+                    serverScope.launch {
+                        val response = withTimeoutOrNull(timeoutMs + 5_000L) {
+                            runCatching { handler(request) }.getOrElse { e ->
+                                RpcResponse.failure(request.id, "BODY_ERROR", e.message ?: "handler error")
+                            }
+                        } ?: RpcResponse.failure(request.id, "TIMEOUT", "handler 执行超时（服务侧取消）", "unknown_side_effect")
+                        @Suppress("UNCHECKED_CAST")
+                        singleFlight.complete(key, entry.future as java.util.concurrent.CompletableFuture<Any>, response)
                     }
-                    newFuture.complete(final)
-                    idempotentInFlight.remove(key, newFuture)
+                    val awaited = runCatching { entry.future.get(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS) }.getOrNull()
+                        ?: RpcResponse.failure(
+                            request.id, "TIMEOUT",
+                            "handler 超时——副作用可能已发生：同 key 重试会等待并返回第一次执行的真实结果；切勿换 key 盲重试，先 perceive.screen 核实现场",
+                            "unknown_side_effect",
+                        )
+                    return jsonResponse(awaited)
                 }
             }
-            val awaited = runCatching { newFuture.get(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS) }.getOrNull()
-                ?: RpcResponse.failure(
-                    request.id, "TIMEOUT",
-                    "handler 超时——副作用可能已发生：同 key 重试会等待并返回第一次执行的真实结果；切勿换 key 盲重试，先 perceive.screen 核实现场",
-                    "unknown_side_effect",
-                )
-            return jsonResponse(awaited)
         }
         val response = dispatch(handler, request)
         return jsonResponse(response)
