@@ -7,6 +7,10 @@
         "method",
         "params",
         "idempotencyKey"
+      ],
+      "optional": [
+        "params",
+        "idempotencyKey"
       ]
     },
     "RpcError": {
@@ -16,12 +20,20 @@
         "reason",
         "nonce"
       ],
+      "optional": [
+        "reason",
+        "nonce"
+      ],
       "bodyOnly": true
     },
     "RpcResponse": {
       "fields": [
         "id",
         "ok",
+        "result",
+        "error"
+      ],
+      "optional": [
         "result",
         "error"
       ]
@@ -46,7 +58,14 @@
       "fields": [
         "seq",
         "type",
-        "payload"
+        "payload",
+        "sourceSessionId",
+        "commandId"
+      ],
+      "optional": [
+        "payload",
+        "sourceSessionId",
+        "commandId"
       ]
     },
     "HealthStatus": {
@@ -63,6 +82,10 @@
         "located",
         "signature",
         "note"
+      ],
+      "optional": [
+        "signature",
+        "note"
       ]
     },
     "A11yNode": {
@@ -72,6 +95,10 @@
         "selected",
         "sensitive",
         "bounds"
+      ],
+      "optional": [
+        "selected",
+        "sensitive"
       ]
     },
     "Mark": {
@@ -86,6 +113,19 @@
         "signature",
         "kind",
         "blank",
+        "nodes",
+        "marks",
+        "pageTexts",
+        "appPackage",
+        "sensitiveSession",
+        "screenshotRef",
+        "screenWidth",
+        "screenHeight",
+        "screenshotWidth",
+        "screenshotHeight",
+        "visionFallback"
+      ],
+      "optional": [
         "nodes",
         "marks",
         "pageTexts",
@@ -121,6 +161,9 @@
       "fields": [
         "speaker",
         "confidence"
+      ],
+      "optional": [
+        "speaker"
       ]
     },
     "SensorResult": {
@@ -194,6 +237,12 @@
         "signature",
         "timestamp"
       ],
+      "optional": [
+        "args",
+        "signature",
+        "sensitive",
+        "resultKind"
+      ],
       "brainOnly": [
         "sensitive",
         "resultKind"
@@ -208,8 +257,44 @@
         "displayText",
         "requiresUser",
         "resultKind",
-        "timestamp"
-      ]
+        "timestamp",
+        "sourceSessionId",
+        "commandId"
+      ],
+      "optional": [
+        "stepIndex",
+        "displayText",
+        "requiresUser",
+        "resultKind",
+        "sourceSessionId",
+        "commandId"
+      ],
+      "enums": {
+        "state": [
+          "prompt_start",
+          "act",
+          "act_done",
+          "hitl_wait",
+          "blocked",
+          "finish",
+          "error",
+          "heartbeat"
+        ],
+        "requiresUser": [
+          "none",
+          "control",
+          "confirm",
+          "handoff"
+        ],
+        "resultKind": [
+          "success",
+          "failed",
+          "aborted",
+          "paused",
+          "stopped",
+          "unknown_side_effect"
+        ]
+      }
     },
     "MemoryEntry": {
       "fields": [
@@ -223,6 +308,10 @@
         "revoked",
         "createdAt",
         "updatedAt"
+      ],
+      "optional": [
+        "hits",
+        "revoked"
       ]
     },
     "MemoryWriteResult": {
@@ -252,6 +341,11 @@
         "startedAt",
         "finishedAt",
         "archivedAt",
+        "memoriesInjected"
+      ],
+      "optional": [
+        "failureReason",
+        "trace",
         "memoriesInjected"
       ]
     },

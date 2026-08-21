@@ -12,7 +12,9 @@ const files = [
   "docs/17-当前方案设计.md",
 ] as const
 
-const contents = new Map(files.map((file) => [file, readFileSync(resolve(root, file), "utf8")]))
+const overclaimFiles = ["docs/00-项目导读与审计交接.md"] as const
+const allFiles = [...files, ...overclaimFiles] as const
+const contents = new Map(allFiles.map((file) => [file, readFileSync(resolve(root, file), "utf8")]))
 const violations: string[] = []
 
 function modelPolicyViolations(line: string): string[] {
@@ -37,7 +39,7 @@ assert.ok(modelPolicyViolations("GLM 连续失败 3 次自动切换").length > 0
 assert.deepEqual(modelPolicyViolations("VISION_MODEL=qwen4.0 # 当前部署示例，可替换"), [])
 assert.deepEqual(modelPolicyViolations("历史实证 glm-9.0 tool-call"), [])
 
-function rejectPhrase(file: typeof files[number], phrase: string): void {
+function rejectPhrase(file: typeof allFiles[number], phrase: string): void {
   const lines = contents.get(file)!.split(/\r?\n/)
   lines.forEach((line, index) => {
     if (line.includes(phrase)) violations.push(`${file}:${index + 1}: stale phrase: ${phrase}`)
@@ -62,6 +64,15 @@ const staleMatrixPhrases = [
   "技能命中会覆盖已构造的主人记忆块",
   "快照明文非原子、无 schema/checksum",
 ] as const
+
+const visualOverclaimPhrases = [
+  "真根因：VLM 绝对坐标输出坐标系不稳定",
+  "L1 视觉正确路线=**SoM",
+] as const
+
+for (const file of overclaimFiles) {
+  for (const phrase of visualOverclaimPhrases) rejectPhrase(file, phrase)
+}
 
 for (const file of files) {
   for (const phrase of staleMatrixPhrases) rejectPhrase(file, phrase)

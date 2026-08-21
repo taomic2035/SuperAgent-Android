@@ -2,6 +2,7 @@ package com.superagent.body.core.http
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertInstanceOf
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.util.concurrent.CompletableFuture
@@ -15,7 +16,14 @@ import java.util.concurrent.atomic.AtomicInteger
  */
 class KeyedSingleFlightTest {
 
-    private fun newFlight() = KeyedSingleFlight(mutableMapOf<String, Any>(), 128)
+    private fun newFlight() = KeyedSingleFlight(java.util.concurrent.ConcurrentHashMap<String, Any>(), 128)
+
+    @Test
+    fun `0-拒绝非并发缓存避免 enter 与 complete 跨线程竞态`() {
+        assertThrows(IllegalArgumentException::class.java) {
+            KeyedSingleFlight(mutableMapOf<String, Any>(), 128)
+        }
+    }
 
     @Test
     fun `1-窗口期同 key 重试 handler 恰一次且双调用者同结果`() {
@@ -76,21 +84,27 @@ class KeyedSingleFlightTest {
     }
 
     @Test
-    fun `4-值匹配解除防误删他人 future`() {
+    fun `4-非 owner future 不得落缓存或解除在途 owner`() {
         val sf = newFlight()
-        val f1 = CompletableFuture<Any>()
-        sf.enter<String>("k4") // 占位 f1（Execute 路径）
-        // complete 走完生命周期
-        sf.complete("k4", f1, "done")
-        // 旧 future 的迟到 remove（值匹配）不得影响后续新请求
-        sf.inFlightInternal().remove("k4", f1)
-        val next = sf.enter<String>("k4")
-        assertInstanceOf(KeyedSingleFlight.Entry.Cached::class.java, next, "缓存命中（若误删也不影响正确性——缓存为准）")
+        val owner = sf.enter<String>("k4") as KeyedSingleFlight.Entry.Execute<String>
+        val stale = CompletableFuture<Any>()
+
+        // 迟到/非 owner 完成不得抢先写入缓存，也不得掩盖真正 owner 仍在途。
+        sf.complete("k4", stale, "stale")
+        val duringOwner = sf.enter<String>("k4")
+        assertInstanceOf(KeyedSingleFlight.Entry.Share::class.java, duringOwner)
+        assertTrue((duringOwner as KeyedSingleFlight.Entry.Share<String>).future === owner.future)
+
+        @Suppress("UNCHECKED_CAST")
+        sf.complete("k4", owner.future as CompletableFuture<Any>, "done")
+        val afterOwner = sf.enter<String>("k4")
+        assertEquals("done", (afterOwner as KeyedSingleFlight.Entry.Cached<String>).result)
+        assertTrue(sf.inFlightInternal().isEmpty(), "owner 完成后必须无 in-flight 泄漏")
     }
 
     @Test
     fun `5-容量环淘汰`() {
-        val sf = KeyedSingleFlight(mutableMapOf<String, Any>(), 2)
+        val sf = KeyedSingleFlight(java.util.concurrent.ConcurrentHashMap<String, Any>(), 2)
         for (i in 1..3) {
             val e = sf.enter<String>("k$i")
             sf.complete("k$i", (e as KeyedSingleFlight.Entry.Execute<String>).future as CompletableFuture<Any>, "v$i")

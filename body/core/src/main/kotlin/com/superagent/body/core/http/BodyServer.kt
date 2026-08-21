@@ -37,7 +37,7 @@ class BodyServer(
     private val handlers = ConcurrentHashMap<String, Handler>()
     private val handlerTimeouts = ConcurrentHashMap<String, Long>()
     /** S5：幂等缓存与 single-flight 下沉 KeyedSingleFlight（JVM 并发测试覆盖） */
-    private val singleFlight = KeyedSingleFlight(mutableMapOf<String, Any>(), MAX_IDEMPOTENT_ENTRIES)
+    private val singleFlight = KeyedSingleFlight(ConcurrentHashMap<String, Any>(), MAX_IDEMPOTENT_ENTRIES)
 
     /** C-10（docs/16 §8）：结构化 scope 替代 GlobalScope——服务生命周期可整体取消 */
     private val serverScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)

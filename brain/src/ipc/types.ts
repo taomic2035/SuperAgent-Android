@@ -1,7 +1,7 @@
 export interface RpcRequest {
   id: number
   method: string
-  params: unknown
+  params?: unknown
   idempotencyKey?: string
 }
 
@@ -12,7 +12,9 @@ export type RpcResponse =
 export interface BodyEvent {
   seq: number
   type: "state" | "hitl" | "voice" | "sensor" | "log"
-  payload: unknown
+  payload?: unknown
+  sourceSessionId?: string
+  commandId?: string
 }
 
 export interface HealthStatus {
@@ -137,7 +139,7 @@ export interface HitlHandoffResult {
 
 export interface TraceStep {
   tool: string
-  args: Record<string, unknown>
+  args?: Record<string, unknown>
   located: boolean
   signature?: string
   timestamp: number
@@ -148,16 +150,38 @@ export interface TraceStep {
 }
 
 /** UI-0 事件回灌（docs/12 §7 UX 最低契约）：brain → body → 悬浮层，类型化封闭契约。 */
+export type BrainEventState =
+  | "prompt_start"
+  | "act"
+  | "act_done"
+  | "hitl_wait"
+  | "blocked"
+  | "finish"
+  | "error"
+  | "heartbeat"
+
+export type BrainEventRequiresUser = "none" | "control" | "confirm" | "handoff"
+
+export type BrainEventResultKind =
+  | "success"
+  | "failed"
+  | "aborted"
+  | "paused"
+  | "stopped"
+  | "unknown_side_effect"
+
 export interface BrainEvent {
   taskId: string
   seq: number
-  /** 有限枚举（docs/12 §6）：prompt_start/act/act_done/hitl_wait/blocked/finish/error */
-  state: string
+  /** 有限枚举（docs/12 §6）：含 heartbeat；未知值 fail-closed */
+  state: BrainEventState
   stepIndex?: number
-  displayText: string
-  requiresUser: string
-  resultKind?: string
+  displayText?: string
+  requiresUser?: BrainEventRequiresUser
+  resultKind?: BrainEventResultKind
   timestamp: number
+  sourceSessionId?: string
+  commandId?: string
 }
 
 /** ME-1 记忆条目（docs/15 §4）：body 侧 SQLite 权威存储，brain 只经 RPC 读写 */
@@ -171,7 +195,7 @@ export interface MemoryEntry {
   confidence: number
   /** run:<goal摘要> | user-told | reflection | gate-lesson */
   source: string
-  hits: number
+  hits?: number
   /** 软删（修订留痕）：被同 topic 新版顶掉的旧条目 revoked=1，检索不可见 */
   revoked?: boolean
   createdAt: number

@@ -68,9 +68,15 @@ class FloatingUiService : android.app.Service() {
             android.os.Handler(mainLooper).post {
                 render(snap)
                 updateNotification(snap)
-                // #26：面板由终态驱动（点球只发请求）——PAUSED/STOPPED 到达时自动展开，用户确认后再收
-                if (!panelOpen && (snap.state == UiStateController.UiState.PAUSED || snap.state == UiStateController.UiState.STOPPED)) {
-                    togglePanel()
+                // 面板由权威状态驱动；BLOCKED 使用无执行动作的专用处置面板。
+                when (FloatingUiPolicy.onStateArrival(snap.state, panelOpen)) {
+                    FloatingUiPolicy.ArrivalAction.OPEN_CONTROL_PANEL -> togglePanel()
+                    FloatingUiPolicy.ArrivalAction.OPEN_BLOCKED_PANEL -> showBlockedPanel()
+                    FloatingUiPolicy.ArrivalAction.REPLACE_WITH_BLOCKED_PANEL -> {
+                        closePanel()
+                        showBlockedPanel()
+                    }
+                    FloatingUiPolicy.ArrivalAction.NONE -> Unit
                 }
             }
         }
@@ -147,13 +153,12 @@ class FloatingUiService : android.app.Service() {
     }
 
     private fun onBallClick() {
-        when (ui.state) {
-            UiStateController.UiState.IDLE, UiStateController.UiState.OFFLINE, UiStateController.UiState.MINI ->
-                showIdlePanel()
-            UiStateController.UiState.COMPLETED, UiStateController.UiState.FAILED, UiStateController.UiState.STOPPED -> {
-                showResultPanel()
-            }
-            else -> {
+        when (FloatingUiPolicy.onBallClick(ui.state, panelOpen)) {
+            FloatingUiPolicy.BallAction.OPEN_IDLE_PANEL -> showIdlePanel()
+            FloatingUiPolicy.BallAction.OPEN_RESULT_PANEL -> showResultPanel()
+            FloatingUiPolicy.BallAction.OPEN_BLOCKED_PANEL -> showBlockedPanel()
+            FloatingUiPolicy.BallAction.CLOSE_PANEL -> closePanel()
+            FloatingUiPolicy.BallAction.REQUEST_PAUSE -> {
                 // I3+#26：运行中点球只发 pause_request——面板等 PAUSED 终态自动展开（subscribe 驱动），
                 // 不再点击即开（此前面板先于安全边界出现，用户以为已暂停而动作仍在途）
                 UiBus.events?.emit("voice", buildJsonObject { put("kind", "pause_request") })
@@ -192,6 +197,47 @@ class FloatingUiService : android.app.Service() {
             text = "关闭"
             setOnClickListener { closePanel() }
         })
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            PixelFormat.TRANSLUCENT,
+        ).apply { gravity = Gravity.CENTER }
+        wm.addView(root, params)
+        panel = root
+        panelOpen = true
+    }
+
+    /** 未知执行结果处置面板：只提示用户核对设备，不提供任何继续执行入口。 */
+    private fun showBlockedPanel() {
+        if (panelOpen) { closePanel(); return }
+        val model = FloatingUiPolicy.blockedPanel(ui.snapshot().currentStep)
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            background = GradientDrawable().apply { setColor(Color.argb(225, 24, 24, 32)); cornerRadius = 28f }
+            setPadding(48, 36, 48, 36)
+        }
+        root.addView(TextView(this).apply {
+            text = "需要处理"
+            textSize = 16f; setTextColor(Color.WHITE); setPadding(0, 0, 0, 8)
+        })
+        root.addView(TextView(this).apply {
+            text = model.currentStep
+            textSize = 13f; setTextColor(Color.LTGRAY); maxLines = 2; setPadding(0, 0, 0, 16)
+        })
+        root.addView(TextView(this).apply {
+            text = model.guidance
+            textSize = 13f; setTextColor(Color.WHITE); maxLines = 3; setPadding(0, 0, 0, 16)
+        })
+        model.actions.forEach { action ->
+            when (action) {
+                FloatingUiPolicy.BlockedPanelAction.CLOSE -> root.addView(Button(this).apply {
+                    text = "关闭"
+                    setOnClickListener { closePanel() }
+                })
+            }
+        }
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,

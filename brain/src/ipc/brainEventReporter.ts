@@ -127,7 +127,7 @@ export type FinishResultKind =
   | "aborted" // 用户停止（UI 映射 STOPPED）
   | "paused" // 用户暂停（#26：暂停 settle 终态，UI 映射 PAUSED——不得再误报 success）
   | "stopped" // 保留（docs/12 枚举完整；stopped 与 aborted 语义分流时启用）
-  | "unknown_side_effect" // 停止后设备状态未确认（保留，UI 已映射 FAILED·确认中）
+  | "unknown_side_effect" // 停止后设备状态未确认（UI 映射 BLOCKED，等待可信核对）
 
 export async function reportFinish(resultKind: FinishResultKind, text: string): Promise<void> {
   if (finished) return

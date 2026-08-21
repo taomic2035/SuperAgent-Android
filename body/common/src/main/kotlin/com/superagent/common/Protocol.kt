@@ -48,6 +48,8 @@ data class BodyEvent(
     val seq: Long,
     val type: String,
     val payload: JsonElement? = null,
+    val sourceSessionId: String? = null,
+    val commandId: String? = null,
 )
 
 @Serializable
@@ -224,19 +226,51 @@ data class TraceStep(
  * 类型化封闭契约：禁止开放 payload 覆盖权威字段；seq 单调可去重；taskId 隔离旧任务事件。
  */
 @Serializable
+enum class BrainEventState(val wireValue: String) {
+    @SerialName("prompt_start") PROMPT_START("prompt_start"),
+    @SerialName("act") ACT("act"),
+    @SerialName("act_done") ACT_DONE("act_done"),
+    @SerialName("hitl_wait") HITL_WAIT("hitl_wait"),
+    @SerialName("blocked") BLOCKED("blocked"),
+    @SerialName("finish") FINISH("finish"),
+    @SerialName("error") ERROR("error"),
+    @SerialName("heartbeat") HEARTBEAT("heartbeat"),
+}
+
+@Serializable
+enum class BrainEventRequiresUser(val wireValue: String) {
+    @SerialName("none") NONE("none"),
+    @SerialName("control") CONTROL("control"),
+    @SerialName("confirm") CONFIRM("confirm"),
+    @SerialName("handoff") HANDOFF("handoff"),
+}
+
+@Serializable
+enum class BrainEventResultKind(val wireValue: String) {
+    @SerialName("success") SUCCESS("success"),
+    @SerialName("failed") FAILED("failed"),
+    @SerialName("aborted") ABORTED("aborted"),
+    @SerialName("paused") PAUSED("paused"),
+    @SerialName("stopped") STOPPED("stopped"),
+    @SerialName("unknown_side_effect") UNKNOWN_SIDE_EFFECT("unknown_side_effect"),
+}
+
+@Serializable
 data class BrainEvent(
     val taskId: String,
     val seq: Long,
-    /** 有限枚举（docs/12 §6 状态机）：prompt_start/act/act_done/hitl_wait/blocked/finish/error */
-    val state: String,
+    /** 有限枚举（docs/12 §6 状态机）：含 heartbeat；未知值 fail-closed */
+    val state: BrainEventState,
     val stepIndex: Int? = null,
     /** 已脱敏、用户可读、长度受限的显示文本 */
     val displayText: String = "",
     /** 纯展示 none / 普通控制 control / 可信确认 confirm / 人工接管 handoff */
-    val requiresUser: String = "none",
-    /** finish 必填：success/failed/aborted/unknown_side_effect */
-    val resultKind: String? = null,
+    val requiresUser: BrainEventRequiresUser = BrainEventRequiresUser.NONE,
+    /** finish 必填：success/failed/aborted/paused/stopped/unknown_side_effect */
+    val resultKind: BrainEventResultKind? = null,
     val timestamp: Long,
+    val sourceSessionId: String? = null,
+    val commandId: String? = null,
 )
 
 /** ME-1 记忆条目（docs/15 §4）：body 侧 SQLite files/memory.db 权威存储，brain 只经 RPC 读写 */

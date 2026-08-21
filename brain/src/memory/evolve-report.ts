@@ -65,18 +65,18 @@ export async function printEvolveReport(body: BodyClient): Promise<void> {
   console.log(`  active ${active.length} / revoked 留痕 ${entries.length - active.length}（容量线 500）`)
   for (const [kind, list] of byKind) {
     const avgConf = list.reduce((s, e) => s + e.confidence, 0) / list.length
-    const zeroHit = list.filter((e) => e.hits === 0).length
+    const zeroHit = list.filter((e) => (e.hits ?? 0) === 0).length
     console.log(`  ${kind.padEnd(10)} ${String(list.length).padStart(3)} 条 · 均值信度 ${avgConf.toFixed(2)} · 零命中 ${zeroHit}`)
   }
 
   // 4. lesson 复用（hits = 被检索命中次数）
   const lessons = active.filter((e) => e.kind === "lesson")
   if (lessons.length > 0) {
-    const reused = lessons.filter((e) => e.hits > 0)
+    const reused = lessons.filter((e) => (e.hits ?? 0) > 0)
     console.log("\n▍教训复用")
     console.log(`  ${reused.length}/${lessons.length} 条 lesson 被命中过；Top：`)
-    for (const e of [...lessons].sort((a, b) => b.hits - a.hits).slice(0, 3)) {
-      console.log(`    [hits ${e.hits}] ${e.topic}：${e.content.slice(0, 40)}`)
+    for (const e of [...lessons].sort((a, b) => (b.hits ?? 0) - (a.hits ?? 0)).slice(0, 3)) {
+      console.log(`    [hits ${e.hits ?? 0}] ${e.topic}：${e.content.slice(0, 40)}`)
     }
   }
 

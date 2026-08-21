@@ -13,6 +13,12 @@ class KeyedSingleFlight(
     private val cache: MutableMap<String, Any>,
     private val maxEntries: Int,
 ) {
+    init {
+        require(cache is java.util.concurrent.ConcurrentMap<*, *>) {
+            "KeyedSingleFlight cache must support concurrent enter/complete access"
+        }
+    }
+
     private val inFlight = java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.CompletableFuture<Any>>()
     private val order = java.util.concurrent.ConcurrentLinkedQueue<String>()
 
@@ -43,6 +49,9 @@ class KeyedSingleFlight(
 
     /** 执行完成：结果入缓存 → 放行等待者 → 解除 in-flight（顺序即不变量 1）。 */
     fun complete(key: String, future: java.util.concurrent.CompletableFuture<Any>, result: Any) {
+        // 只有 enter(key) 创建并占位成功的 owner 才能发布结果。迟到/伪造 future
+        // 不得抢先污染缓存，更不得掩盖真正 owner 仍在途的事实。
+        if (inFlight[key] !== future) return
         if (cache.putIfAbsent(key, result) == null) {
             order.add(key)
             while (order.size > maxEntries) {

@@ -6,7 +6,7 @@
 
 [![status](https://img.shields.io/badge/status-v0.1.1%20post--release%20audit-orange)]()
 [![license](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
-[![tests](https://img.shields.io/badge/tests-brain55%20%7C%20body117-brightgreen)]()
+[![tests](https://img.shields.io/badge/tests-brain55%20%7C%20body183-brightgreen)]()
 [![protocol](https://img.shields.io/badge/IPC-v2-orange)](docs/07-接口规格说明书.md)
 
 ---
@@ -23,7 +23,7 @@
 | M3 飞轮绿 | ✅ | 技能回放（签名步进校验）+ 状态机（candidate→verified） |
 | G5 交互绿 | ✅ | 暂停→持久化→单次恢复、停止不可复活；离线输入在 EventBus 前明确拒绝 |
 | M4 语音绿 | ◐ | ASR 与在线播报有真机证据；本地 sherpa TTS 当前禁用，系统 TTS 兜底 |
-| M5 工程绿 | ◐ | 本轮 brain 55 个行为组、body 117 JVM 与 Debug APK 构建全绿；真机未复验 |
+| M5 工程绿 | ◐ | 本轮 brain 55 个行为组、body 183 JVM 与 Debug APK 构建全绿；真机未复验 |
 | ME 记忆 | ◐ | SQLite、反思、归档与原子快照代码已闭环；真实 DB 恢复演练、import 批内去重与管理体验待验 |
 
 审计详情见 [docs/16](docs/16-当前架构代码审计-2026-08-21.md)，整改后的当前方案见 [docs/17](docs/17-当前方案设计.md)。
@@ -83,7 +83,18 @@ flowchart TB
 
 **安全铁律**：大脑只“想”，躯体才“做”。`ActionExecutor`、`ActionGate`、敏感会话和 HITL nonce 主链已经落地；selector 内部最终坐标也复用同一 typed gate。
 
-**感知阶梯**：L0 a11y、L1 screenshot/blob/VLM 与 L2 auto 路由已接通。视觉 provider、输出或坐标无效时不会伪装成功，而是返回 typed reason + fresh a11y；屏幕旋转/resize 在取帧前后 fail-closed。真机坐标标定仍待设备验收。
+**感知阶梯**：L0 a11y、L1 screenshot/blob/VLM 与 L2 auto 路由已接通。provider、格式、越界坐标或取帧期间旋转/resize 会 typed fallback 到 fresh a11y；但“边界内”不等于“语义坐标系正确”。受控多点标定或 SoM 映射完成前，direct-coordinate 仅属实验能力，不应直接驱动生产动作。
+
+以下是**目标门禁（尚未实现）**；当前代码仍可能暴露或消费视觉 marks，不能把该图理解为已上线运行链。
+
+```mermaid
+flowchart LR
+    V[VLM 输出] --> S{格式与边界合法?}
+    S -->|否| A[fresh a11y fallback]
+    S -->|是| M{目标门禁<br/>语义坐标已验证?}
+    M -->|否| B[目标行为：阻断设备动作<br/>当前尚未实现]
+    M -->|是| G[ActionGate 最终坐标闸]
+```
 
 ### 一次任务如何闭环
 
@@ -136,7 +147,7 @@ bash scripts/fetch-models.sh   # 下载 sherpa-onnx .so + ASR/TTS/声纹模型�
 
 ```bash
 cd body
-./gradlew :common:test :core:testDebugUnitTest   # 当前 117 项 JVM 单测
+./gradlew :common:test :core:testDebugUnitTest :app:testDebugUnitTest   # 当前 183 项 JVM 单测
 ./gradlew :app:assembleDebug                     # Debug APK 当前约 1.01GB
 bash scripts/install.sh                          # 装机 + token 桥接
 ```
@@ -195,7 +206,7 @@ export VISION_MODEL=qwen3.7-plus  # 当前部署示例，可替换
 | brain 集成 | `npm run integration` | 6 项通过 |
 | 恢复竞态 | `npm run resume-coordinator` | 15 项通过：single-flight、stop 优先、paused→stopped |
 | 视觉降级 | `npm run vision-fallback` | 8 项通过：typed fallback、坐标与尺寸校验 |
-| body JVM | `:common:test :core:testDebugUnitTest` | 117 项通过 |
+| body JVM | `:common:test :core:testDebugUnitTest :app:testDebugUnitTest` | 183 项通过（23 common + 156 core + 4 app） |
 | APK 构建 | `:app:assembleDebug` | 本轮通过 |
 | 真机 | 装机验收 | 本轮尚未复验 |
 

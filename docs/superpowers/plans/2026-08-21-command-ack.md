@@ -4,6 +4,13 @@
 
 ## 1. 分工与依赖
 
+| 当前进度（2026-08-21 审计） | 结论 |
+|---|---|
+| P0 | verified：双入口状态保护、并发串行化、断连恢复与 BLOCKED UX 已回归 |
+| P1 | code-complete：关联字段、封闭枚举、跨字段入站校验、合法迁移与兼容测试已落地 |
+| P2 | needs-adjustment：初版缺 `CLAIMED`、lease/session fencing、正文保护，且混淆 claim 与 accepted |
+| P3–P5 | blocked by corrected P2；不得宣称 command ack 闭环 |
+
 | 阶段 | 工作 | 主责 | 复核 | 依赖 |
 |---|---|---|---|---|
 | P0 | 封闭 PAUSING/STOPPING/PAUSED 新命令状态倒退 | GPT | GLM | 无 |
