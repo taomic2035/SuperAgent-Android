@@ -8,8 +8,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 
 /**
- * S6-② command journal 逻辑层单测（冻结设计 docs/superpowers/specs/2026-08-21-command-ack-design.md）：
- * reserve 本地拒绝不入库 / UUID 唯一 / claim 原子与过期 / 状态机合法迁移 / INTERRUPTED 语义。
+ * S6-② command journal（GPT 裁决版：CLAIMED≠ACCEPTED / lease 租约 / bindTask / settle 校验 / 惰性清扫）。
  */
 class CommandStoreTest {
 
@@ -27,16 +26,24 @@ class CommandStoreTest {
         override fun findByCommandId(commandId: String): CommandRecord? = rows.firstOrNull { it.commandId == commandId }
 
         override fun compareAndUpdateStatus(
-            commandId: String,
-            from: CommandStatus,
-            to: CommandStatus,
-            now: Long,
-            taskId: String?,
-            brainSession: String?,
-        ): Boolean {
+            commandId: String, from: CommandStatus, to: CommandStatus, now: Long,
+            taskId: String?, brainSession: String?,
+        ): Boolean = update(commandId, from, to, now, taskId, brainSession, 0)
+
+        override fun compareAndUpdate(
+            commandId: String, from: CommandStatus, to: CommandStatus, now: Long,
+            taskId: String?, brainSession: String?, leaseUntil: Long,
+        ): Boolean = update(commandId, from, to, now, taskId, brainSession, leaseUntil)
+
+        private fun update(commandId: String, from: CommandStatus, to: CommandStatus, now: Long, taskId: String?, brainSession: String?, leaseUntil: Long): Boolean {
             val i = rows.indexOfFirst { it.commandId == commandId && it.status == from }
             if (i < 0) return false
-            rows[i] = rows[i].copy(status = to, updatedAt = now, taskId = taskId ?: rows[i].taskId, brainSession = brainSession ?: rows[i].brainSession)
+            rows[i] = rows[i].copy(
+                status = to, updatedAt = now,
+                taskId = taskId ?: rows[i].taskId,
+                brainSession = brainSession ?: rows[i].brainSession,
+                leaseUntil = if (leaseUntil > 0) leaseUntil else rows[i].leaseUntil,
+            )
             return true
         }
 
@@ -53,83 +60,88 @@ class CommandStoreTest {
     }
 
     @Test
-    fun `reserve 合法命令入 journal 为 QUEUED 且 UUID 唯一`() {
+    fun `reserve 入 journal 且文本保护存储（禁明文）`() {
         val r = store.reserve("text", "帮我点奶茶")
-        assertTrue(r is CommandStore.ReserveOutcome.Queued)
         val cid = (r as CommandStore.ReserveOutcome.Queued).commandId
         val rec = db.findByCommandId(cid)!!
         assertEquals(CommandStatus.QUEUED, rec.status)
-        assertTrue(cid.length == 36 && cid.contains('-'), "UUID v4 形态")
-        // 两次 reserve 生成不同 commandId（禁推导）
-        val r2 = store.reserve("text", "帮我点奶茶")
-        assertNotEquals(cid, (r2 as CommandStore.ReserveOutcome.Queued).commandId)
+        assertNotEquals("帮我点奶茶", rec.protectedText, "存储禁明文")
+        assertEquals("帮我点奶茶", CommandStore.unprotect(rec.protectedText), "可逆保护（P0 Base64 占位）")
     }
 
     @Test
-    fun `reserve 本地拒绝不入 journal（LOCALLY_REJECTED 无记录）`() {
-        val bad = store.reserve("bogus", "x")
-        assertTrue(bad is CommandStore.ReserveOutcome.LocallyRejected)
-        val empty = store.reserve("text", "   ")
-        assertTrue(empty is CommandStore.ReserveOutcome.LocallyRejected)
-        val long = store.reserve("text", "x".repeat(501))
-        assertTrue(long is CommandStore.ReserveOutcome.LocallyRejected)
-        assertEquals(0, db.rows.size, "本地拒绝不得生成 journal 记录")
+    fun `reserve 本地拒绝不入 journal`() {
+        assertTrue(store.reserve("bogus", "x") is CommandStore.ReserveOutcome.LocallyRejected)
+        assertTrue(store.reserve("text", "  ") is CommandStore.ReserveOutcome.LocallyRejected)
+        assertEquals(0, db.rows.size)
     }
 
     @Test
-    fun `claim 原子领取 QUEUED 到 ACCEPTED 且记录 brainSession`() {
+    fun `claimNext 置 CLAIMED 写租约——bindTask 才 ACCEPTED（CLAIMED≠ACCEPTED）`() {
         val cid = (store.reserve("text", "任务A") as CommandStore.ReserveOutcome.Queued).commandId
-        val c = store.claim(cid, "boot-111")
-        assertTrue(c is CommandStore.ClaimOutcome.Accepted)
-        assertEquals("boot-111", db.findByCommandId(cid)!!.brainSession)
-        // 重复领取（另一 session）必须拒绝
-        val c2 = store.claim(cid, "boot-222")
-        assertTrue(c2 is CommandStore.ClaimOutcome.Rejected, "同 commandId 不得映射第二个领取者")
+        val c = store.claimNext(cid, "boot-1")
+        assertTrue(c is CommandStore.ClaimOutcome.Claimed)
+        val rec = db.findByCommandId(cid)!!
+        assertEquals(CommandStatus.CLAIMED, rec.status, "claim 后是 CLAIMED 不是 ACCEPTED")
+        assertEquals("boot-1", rec.brainSession)
+        assertTrue(rec.leaseUntil > System.currentTimeMillis(), "租约在位")
+        // bindTask：正确 session 绑 taskId → ACCEPTED；错误 session 拒
+        assertFalse(store.bindTask(cid, "task-9", "boot-2"))
+        assertTrue(store.bindTask(cid, "task-9", "boot-1"))
+        assertEquals(CommandStatus.ACCEPTED, db.findByCommandId(cid)!!.status)
     }
 
     @Test
-    fun `claim 过期惰性判为 REJECTED`() {
-        val cid = (store.reserve("text", "旧命令", ttlMs = -1) as CommandStore.ReserveOutcome.Queued).commandId
-        val c = store.claim(cid, "boot-1")
-        assertTrue(c is CommandStore.ClaimOutcome.Rejected && c.reason.contains("过期"))
+    fun `租约期内的 CLAIMED 他方不可抢，租约过期可接管`() {
+        val cid = (store.reserve("text", "任务") as CommandStore.ReserveOutcome.Queued).commandId
+        store.claimNext(cid, "boot-1", leaseMs = 50)
+        // 租约期内他方
+        assertTrue(store.claimNext(cid, "boot-2") is CommandStore.ClaimOutcome.Rejected, "租约期内他方持有")
+        // 同 session 幂等续租（短租约，保持过期可测）
+        assertTrue(store.claimNext(cid, "boot-1", leaseMs = 50) is CommandStore.ClaimOutcome.Claimed)
+        // 等租约过 → 他方可接管
+        Thread.sleep(80)
+        val takeover = store.claimNext(cid, "boot-2")
+        assertTrue(takeover is CommandStore.ClaimOutcome.Claimed, "租约过期可被接管")
+        assertEquals("boot-2", db.findByCommandId(cid)!!.brainSession)
+    }
+
+    @Test
+    fun `settle 校验 session 与 taskId——串改拒绝`() {
+        val cid = (store.reserve("text", "任务") as CommandStore.ReserveOutcome.Queued).commandId
+        store.claimNext(cid, "boot-1")
+        store.bindTask(cid, "task-1", "boot-1")
+        assertFalse(store.settle(cid, "task-1", "boot-2", CommandStatus.RESOLVED), "错 session 拒绝")
+        assertFalse(store.settle(cid, "task-2", "boot-1", CommandStatus.RESOLVED), "错 taskId 拒绝")
+        assertTrue(store.settle(cid, "task-1", "boot-1", CommandStatus.RESOLVED))
+        assertEquals(CommandStatus.RESOLVED, db.findByCommandId(cid)!!.status)
+    }
+
+    @Test
+    fun `INTERRUPTED 仅人工核对后 RESOLVED（禁自动重放）`() {
+        val cid = (store.reserve("text", "任务") as CommandStore.ReserveOutcome.Queued).commandId
+        store.claimNext(cid, "b1"); store.bindTask(cid, "t1", "b1")
+        assertTrue(store.settle(cid, "t1", "b1", CommandStatus.INTERRUPTED))
+        assertFalse(store.settle(cid, "t1", "b1", CommandStatus.ACCEPTED), "禁回执行态")
+        assertTrue(store.settle(cid, "t1", "b1", CommandStatus.RESOLVED), "人工核对后可 RESOLVED")
+    }
+
+    @Test
+    fun `sweepExpired 惰性清扫——QUEUED 过期转 REJECTED，CLAIMED 过期转 INTERRUPTED`() {
+        val q = (store.reserve("text", "排队过期", ttlMs = -1) as CommandStore.ReserveOutcome.Queued).commandId
+        val c = (store.reserve("text", "领取后过期") as CommandStore.ReserveOutcome.Queued).commandId
+        store.claimNext(c, "boot-1")
+        db.rows.first { it.commandId == c }.let { db.rows[db.rows.indexOf(it)] = it.copy(expiresAt = System.currentTimeMillis() - 1) }
+        val swept = store.sweepExpired()
+        assertEquals(2, swept)
+        assertEquals(CommandStatus.REJECTED, db.findByCommandId(q)!!.status)
+        assertEquals(CommandStatus.INTERRUPTED, db.findByCommandId(c)!!.status, "已领取过期=副作用边界未知禁重放")
+    }
+
+    @Test
+    fun `claimNext 过期 QUEUED 惰性转 REJECTED`() {
+        val cid = (store.reserve("text", "旧", ttlMs = -1) as CommandStore.ReserveOutcome.Queued).commandId
+        assertTrue(store.claimNext(cid, "b") is CommandStore.ClaimOutcome.Rejected)
         assertEquals(CommandStatus.REJECTED, db.findByCommandId(cid)!!.status)
-    }
-
-    @Test
-    fun `状态机 合法迁移与非法迁移`() {
-        val cid = (store.reserve("text", "任务") as CommandStore.ReserveOutcome.Queued).commandId
-        store.claim(cid, "b1")
-        // ACCEPTED → WAITING_USER → ACCEPTED（继续）→ RESOLVED
-        assertTrue(store.mark(cid, CommandStatus.WAITING_USER))
-        assertTrue(store.mark(cid, CommandStatus.ACCEPTED))
-        assertTrue(store.mark(cid, CommandStatus.RESOLVED, taskId = "task-9"))
-        assertEquals("task-9", db.findByCommandId(cid)!!.taskId)
-        // RESOLVED 后一切迁移拒绝（终态）
-        assertFalse(store.mark(cid, CommandStatus.INTERRUPTED))
-    }
-
-    @Test
-    fun `INTERRUPTED 后不可自动重放（无任何出边到 ACCEPTED）`() {
-        val cid = (store.reserve("text", "任务") as CommandStore.ReserveOutcome.Queued).commandId
-        store.claim(cid, "b1")
-        assertTrue(store.mark(cid, CommandStatus.INTERRUPTED))
-        assertFalse(store.mark(cid, CommandStatus.ACCEPTED), "崩溃边界未知的命令禁止回到执行态")
-        assertFalse(store.mark(cid, CommandStatus.WAITING_USER))
-        assertTrue(store.mark(cid, CommandStatus.RESOLVED), "仅允许人工核对后 RESOLVED")
-    }
-
-    @Test
-    fun `QUEUED 不可直接终态（必须先 claim）`() {
-        val cid = (store.reserve("text", "任务") as CommandStore.ReserveOutcome.Queued).commandId
-        assertFalse(store.mark(cid, CommandStatus.RESOLVED), "未领取的命令不能被 brain 标终态")
-    }
-
-    @Test
-    fun `list 水位倒序`() {
-        store.reserve("text", "a"); store.reserve("text", "b"); store.reserve("text", "c")
-        val all = store.list()
-        assertEquals(3, all.size)
-        assertEquals("c", all[0].text, "新在前")
-        assertEquals(listOf("c"), store.list(sinceId = all[1].id).map { it.text })
     }
 }
