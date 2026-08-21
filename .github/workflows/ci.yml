@@ -28,6 +28,7 @@ jobs:
       - run: npm run tts-chain
         env:
           RUN_ONLINE_TTS: '1'
+      - run: npm run command-pump
 
   body:
     runs-on: ubuntu-latest
