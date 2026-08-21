@@ -13,6 +13,7 @@ import { beginRun, hasResumableRun, resumeRun, finishRun, peekRun, buildResumeCo
 import { env } from "./env.ts"
 import { speak } from "./tts/index.ts"
 import { scheduleBackup, checkRestoreHint, maintainIfDue } from "./memory/backup.ts"
+import { compactContext } from "./contextWindow.ts"
 import { initBrainEvents, reportPromptStart, reportFinish, isStopRequested, isPaused, clearStop, requestStop, requestPause, resumeFromPause } from "./ipc/brainEventReporter.ts"
 import { buildReflector, buildFailureReflector } from "./memory/reflect.ts"
 import type { FailureReflector, Reflector } from "./memory/reflect.ts"
@@ -141,6 +142,8 @@ async function main(): Promise<void> {
     streamFn: models.streamSimple.bind(models),
     beforeToolCall,
     afterToolCall,
+    // 上下文窗口管理（纯函数，不引用 agent——f4d5dd0 循环引用前科）
+    transformContext: compactContext,
   })
 
   const subscribe = (a: Agent): void => {
@@ -181,6 +184,7 @@ async function main(): Promise<void> {
       streamFn: models.streamSimple.bind(models),
       beforeToolCall,
       afterToolCall,
+      transformContext: compactContext,
     })
     subscribe(agent)
     return true

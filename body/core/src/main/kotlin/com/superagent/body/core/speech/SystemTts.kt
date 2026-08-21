@@ -32,17 +32,19 @@ class SystemTts(private val context: Context) {
         }
     }
 
-    fun isReady(): Boolean {
-        if (!ready) {
-            initLatch.await(5, TimeUnit.SECONDS)
-        }
+    /** 非阻塞就绪查询（G1-07/#32：状态路径不得阻塞 RPC 线程 5s）。 */
+    fun isReady(): Boolean = ready
+
+    /** 播报路径专用：未就绪时等初始化（最多 5s）——speak 本身是阻塞语义，等待合理。 */
+    private fun awaitReady(): Boolean {
+        if (!ready) initLatch.await(5, TimeUnit.SECONDS)
         return ready
     }
 
     /** 播报文本（阻塞直到播完或超时）。@Synchronized 防并发——先 stop 清队列再播。 */
     @Synchronized
     fun speak(text: String): Boolean {
-        if (!isReady()) return false
+        if (!awaitReady()) return false
         // 先清空可能残留的队列（之前的 utterance 可能堵着）
         tts?.stop()
         val done = CountDownLatch(1)

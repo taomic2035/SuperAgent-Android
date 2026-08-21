@@ -134,11 +134,8 @@ class SpeechEngine(private val context: Context) {
 
     /** DS-014 诊断：TTS 引擎状态（vits/kokoro/system 哪个可用） */
     fun ttsStatus(): Map<String, Any> {
-        val sherpaReady = try {
-            tts() != null
-        } catch (e: Exception) {
-            false
-        }
+        // G1-04/#32：vitsFailed=true 时 sherpa 实质不可用（短路直接系统 TTS）——状态必须如实
+        val sherpaReady = !vitsFailed && runCatching { tts() != null }.getOrDefault(false)
         return mapOf(
             "sherpaReady" to sherpaReady,
             "systemTtsReady" to systemTts.isReady(),

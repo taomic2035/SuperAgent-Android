@@ -18,6 +18,7 @@ import { beginRun, addTrace, finishRun, hasResumableRun, resumeRun, resetRun, bu
 import type { RunState } from "../src/runState.ts"
 import { buildTools } from "../src/tools/index.ts"
 import { parseCandidates, parseFailureLessons } from "../src/memory/reflect.ts"
+import { compactContext } from "../src/contextWindow.ts"
 import { loadPersonas } from "../src/personas/personas.ts"
 import type { MemoryEntry, MemoryImportResult, MemorySearchResult, MemoryWriteResult, ScreenResult } from "../src/ipc/types.ts"
 
@@ -423,6 +424,22 @@ async function main(): Promise<void> {
       (err: unknown) => err instanceof BodyUnavailableError,
     )
     ok("躯体不可达抛出 BodyUnavailableError")
+
+    // 上下文窗口管理：条数窗口 + 单条截断 + 折叠行
+    {
+      const long = "x".repeat(15_000)
+      const msgs = Array.from({ length: 100 }, (_, i) => ({ role: "user", content: i === 50 ? long : `m${i}` }))
+      const out = await compactContext(msgs as never[])
+      const text = (m: unknown) => String((m as { content?: unknown }).content ?? "")
+      assert.equal(out.length, 61, "fold + 最近 60 条")
+      assert.ok(text(out[0]).includes("上下文管理"), "折叠行在前")
+      assert.ok(text(out.at(-1)) === "m99", "保尾不保头")
+      const truncatedOne = await compactContext([{ role: "user", content: long }] as never[])
+      assert.ok(text(truncatedOne[0]).includes("截断至"), "单条超长截断")
+      const small = await compactContext([{ role: "user", content: "hi" }] as never[])
+      assert.equal(small.length, 1, "小上下文原样")
+      ok("compactContext 条数窗口+单条截断+折叠行（幂等 fail-open）")
+    }
   } finally {
     await mock.close()
   }
