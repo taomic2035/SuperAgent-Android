@@ -11,6 +11,16 @@ import com.superagent.common.Point
 import com.superagent.common.ScreenResult
 import java.security.MessageDigest
 
+private const val PERCEPTION_CACHE_TTL_MS = 300L
+
+internal fun shouldUsePerceptionCache(
+    forceRefresh: Boolean,
+    keyMatches: Boolean,
+    cacheAgeMs: Long,
+    cachedBlank: Boolean,
+): Boolean = !forceRefresh && keyMatches && cacheAgeMs in 0 until PERCEPTION_CACHE_TTL_MS
+    && !cachedBlank
+
 class ScreenPerceiver(private val accessibilityService: () -> AccessibilityService?) {
 
     /** 性能：短时缓存——同一屏幕 300ms 内重复 perceive 直接返回（brain 常连发 perceive+act） */
@@ -27,12 +37,20 @@ class ScreenPerceiver(private val accessibilityService: () -> AccessibilityServi
     var lastScanHasWebView: Boolean = false
         private set
 
-    fun perceive(mode: String = "auto", inSensitiveSession: Boolean = false): ScreenResult {
+    /**
+     * [forceRefresh] 仅供安全/前台预检绕过短缓存；普通感知保持 300ms 缓存行为。
+     * 强制刷新仍写入最新结果，供随后的普通读取复用。
+     */
+    fun perceive(
+        mode: String = "auto",
+        inSensitiveSession: Boolean = false,
+        forceRefresh: Boolean = false,
+    ): ScreenResult {
         // 缓存命中：同 mode + 同敏感态 + 300ms 内
         val key = "$mode:$inSensitiveSession"
         val now = android.os.SystemClock.elapsedRealtime()
         val cached = cachedResult
-        if (cached != null && cachedKey == key && now - cachedAt < 300 && !cached.blank) {
+        if (cached != null && shouldUsePerceptionCache(forceRefresh, cachedKey == key, now - cachedAt, cached.blank)) {
             return cached
         }
 
@@ -130,7 +148,7 @@ class ScreenPerceiver(private val accessibilityService: () -> AccessibilityServi
     }
 
     private fun currentPackage(root: AccessibilityNodeInfo): String? =
-        root.packageName?.toString()
+        root.packageName?.toString()?.trim()?.takeIf { it.isNotEmpty() }
 
     /** 当前屏幕稳定签名（#18 回放校验）；感知失败/空屏返回 null。 */
     fun currentStableSignature(): String? {

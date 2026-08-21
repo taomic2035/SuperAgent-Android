@@ -10,6 +10,10 @@ import com.superagent.body.core.hardware.HardwareService
 import com.superagent.body.core.hitl.Hitl
 import com.superagent.body.core.http.BodyServer
 import com.superagent.body.core.perception.ScreenPerceiver
+import com.superagent.body.core.perception.PerceptionRoute
+import com.superagent.body.core.perception.VisionCaptureResult
+import com.superagent.body.core.perception.guardedVisionCapture
+import com.superagent.body.core.perception.perceptionRoute
 import com.superagent.body.core.skills.SkillStore
 import com.superagent.body.core.speech.SpeechEngine
 import com.superagent.body.core.speech.SpeechUnavailable
@@ -102,44 +106,70 @@ class BodyCore(
             val mode = req.params?.jsonObject?.get("mode")?.toString()?.trim('"') ?: "auto"
             // L1 视觉（BD-02.2）+ L2 auto 路由（BD-02.3）：a11y 节点不足或含 WebView 时自动 fallback 视觉
             if (mode == "vision" || mode == "auto") {
-                if (mode == "auto") {
-                    // L2 路由：a11y 有效节点 ≥5 且无 WebView → 直接用 a11y（不走截图）
-                    val a11yScreen = perceiver.perceive("a11y", sensitiveSession.inSensitiveSession)
-                    sensitiveSession.onForeground(a11yScreen.appPackage)
-                    val nodeCount = a11yScreen.marks?.size ?: 0
-                    // C-04：改读 perceiver 结构化信号（walk 时 class 判定），弃 label 字符串匹配
-                    if (nodeCount >= 5 && !perceiver.lastScanHasWebView) {
-                        return@rpc ok(req, a11yScreen)
+                // 第一次强制刷新：auto 路由与显式 vision 都不得相信 300ms 内的旧前台包。
+                val scanned = perceiver.perceive(
+                    mode = "a11y",
+                    inSensitiveSession = sensitiveSession.inSensitiveSession,
+                    forceRefresh = true,
+                )
+                sensitiveSession.onForeground(scanned.appPackage)
+                val freshScreen = scanned.copy(sensitiveSession = sensitiveSession.inSensitiveSession)
+                when (
+                    perceptionRoute(
+                        mode = mode,
+                        a11yScreen = freshScreen,
+                        hasWebView = perceiver.lastScanHasWebView,
+                        inSensitiveSession = sensitiveSession.inSensitiveSession,
+                    )
+                ) {
+                    PerceptionRoute.UseA11y -> return@rpc ok(req, freshScreen)
+                    PerceptionRoute.VisionBlocked -> {
+                        return@rpc RpcResponse.failure(req.id, "VISION_BLOCKED", "敏感会话或前台应用未知，禁止视觉导出", "privacy")
                     }
-                    // a11y 不足——落入 vision 路径
+                    PerceptionRoute.UseVision -> Unit
                 }
-                if (mode == "vision" || mode == "auto") {
-                    // 审计 P1-06：敏感会话内禁止视觉导出（截图出设备 = 隐私边界）
-                    if (sensitiveSession.inSensitiveSession) {
-                        return@rpc RpcResponse.failure(req.id, "VISION_BLOCKED", "敏感会话内禁止视觉导出（已回退 a11y 可用）", "privacy")
-                    }
-                    // UX-10：截图前隐藏全部 overlay（OverlayGate），留一帧视图生效余量后采集
-                    com.superagent.body.core.ui.OverlayGate.hide()
+
+                // UX-10：截图前隐藏全部 overlay（OverlayGate），留一帧视图生效余量后采集。
+                com.superagent.body.core.ui.OverlayGate.hide()
+                try {
                     try {
-                        try {
-                            Thread.sleep(180)
-                        } catch (_: InterruptedException) {
-                        }
-                        val ref = runCatching { screenshots.capture(blobsDir) }.getOrNull()
-                        if (ref != null) {
-                            val a11yScreen = perceiver.perceive("a11y", sensitiveSession.inSensitiveSession)
-                            sensitiveSession.onForeground(a11yScreen.appPackage)
+                        Thread.sleep(180)
+                    } catch (_: InterruptedException) {
+                    }
+                    // 第二次强制刷新紧邻 capture，关闭 overlay settle 期间切入敏感 App 的 TOCTOU 窗口。
+                    when (
+                        val captured = guardedVisionCapture(
+                            freshScan = {
+                                perceiver.perceive(
+                                    mode = "a11y",
+                                    inSensitiveSession = sensitiveSession.inSensitiveSession,
+                                    forceRefresh = true,
+                                )
+                            },
+                            synchronizeForeground = sensitiveSession::onForeground,
+                            isSensitive = { sensitiveSession.inSensitiveSession },
+                            capture = { runCatching { screenshots.capture(blobsDir) }.getOrNull() },
+                        )
+                        ) {
+                        is VisionCaptureResult.Blocked ->
+                            return@rpc RpcResponse.failure(req.id, "VISION_BLOCKED", "敏感会话或前台应用未知，禁止视觉导出", "privacy")
+                        is VisionCaptureResult.Completed -> {
+                            val ref = captured.screenshotRef
+                            if (ref == null) return@rpc ok(req, captured.screen)
                             return@rpc ok(
                                 req,
-                                a11yScreen.copy(kind = "vision", marks = null, nodes = null, pageTexts = null, screenshotRef = ref),
+                                captured.screen.copy(
+                                    kind = "vision",
+                                    marks = null,
+                                    nodes = null,
+                                    pageTexts = null,
+                                    screenshotRef = ref,
+                                ),
                             )
                         }
-                        val fallback = perceiver.perceive("a11y", sensitiveSession.inSensitiveSession)
-                        sensitiveSession.onForeground(fallback.appPackage)
-                        return@rpc ok(req, fallback)
-                    } finally {
-                        com.superagent.body.core.ui.OverlayGate.restore()
                     }
+                } finally {
+                    com.superagent.body.core.ui.OverlayGate.restore()
                 }
             }
             val screen = perceiver.perceive(mode, sensitiveSession.inSensitiveSession)
