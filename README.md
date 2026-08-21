@@ -6,7 +6,7 @@
 
 [![status](https://img.shields.io/badge/status-v0.1.0%20post--release%20audit-orange)]()
 [![license](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
-[![tests](https://img.shields.io/badge/tests-brain31%20%7C%20body168-brightgreen)]()
+[![tests](https://img.shields.io/badge/tests-brain43%20%7C%20body168-brightgreen)]()
 [![protocol](https://img.shields.io/badge/IPC-v2-orange)](docs/07-接口规格说明书.md)
 
 ---
