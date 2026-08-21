@@ -14,11 +14,17 @@ let stopRequested = false
 let pauseRequested = false
 /** U2-H03：brain boot 会话标识——重启后嵌入 taskId，UI 侧安全重置 seq 水位 */
 let bootSession = `boot-${Date.now()}`
+/** C-12（docs/16 §8）：run 终态已上报——迟到的 act/act_done 不再发送（UI 已收终态，迟到步进只添噪） */
+let finished = false
+/** C-12：事件发送串行链——seq 单调不保证到达序（HTTP 并发），act_done 晚于 finish 到达会被
+ *  UI 的 seq 水线去重丢弃终态（UI 卡 RUNNING）。链内分配 seq + 顺序发送，双保险。 */
+let emitChain: Promise<void> = Promise.resolve()
 
 export function initBrainEvents(client: BodyClient): void {
   body = client
   bootSession = `boot-${Date.now()}`
   seq = 0
+  finished = false
 }
 
 export function requestStop(): void {
@@ -49,6 +55,8 @@ export function isPaused(): boolean {
 
 async function emit(state: BrainEvent["state"], displayText: string, extra?: Partial<BrainEvent>): Promise<void> {
   if (!body) return
+  // C-12：终态后只放行 heartbeat（连通性信号），步进/终态重复全丢弃
+  if (finished && state !== "heartbeat") return
   const event: BrainEvent = {
     taskId,
     seq: ++seq,
@@ -58,12 +66,16 @@ async function emit(state: BrainEvent["state"], displayText: string, extra?: Par
     timestamp: Date.now(),
     ...extra,
   }
-  await body.rpc("brain.event", event).catch(() => undefined)
+  // C-12：入串行链——seq 分配与 HTTP 发送同序，杜绝并发乱序到达挤掉终态
+  const sent: Promise<void> = emitChain.then(() => body!.rpc("brain.event", event).catch(() => undefined)).then(() => undefined)
+  emitChain = sent.catch(() => undefined)
+  return sent
 }
 
 export async function reportPromptStart(goal: string): Promise<void> {
   taskId = `task-${Date.now()}-${bootSession}`
   stepIndex = 0
+  finished = false // C-12：新任务开启，恢复事件上报
   await emit("prompt_start", `目标：${goal.slice(0, 20)}`)
 }
 
@@ -116,4 +128,5 @@ export type FinishResultKind =
 
 export async function reportFinish(resultKind: FinishResultKind, text: string): Promise<void> {
   await emit("finish", text, { resultKind })
+  finished = true // C-12：终态已入链——此后迟到的 act/act_done 全丢弃
 }
