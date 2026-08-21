@@ -10,9 +10,8 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import com.superagent.body.core.ui.UiBus
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
 
 /**
  * 半透明文字输入 Activity（docs/12 §4.C：独立输入表面——只有打字时获取键盘焦点，
@@ -51,11 +50,11 @@ class CommandInputActivity : android.app.Activity() {
                 val text = input.text.toString().trim()
                 if (text.isEmpty() || sent) return@setOnClickListener
                 sent = true
-                // 同一条指令只入队一次（§5.2.4）；本地受理反馈由 UiStateController 的 IDLE 展示承担（300ms 内）
-                UiBus.events?.emit(
-                    "voice",
-                    buildJsonObject { put("kind", "text_input"); put("text", text) },
-                )
+                // C-07：由权威 UI 状态在事件发布前决定受理/拒绝；离线指令不进 EventBus。
+                val accepted = UiBus.stateController?.submitTextInput(text) == true
+                if (!accepted) {
+                    Toast.makeText(this@CommandInputActivity, "未发送·大脑离线", Toast.LENGTH_SHORT).show()
+                }
                 finish()
             }
         }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))

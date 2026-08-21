@@ -3,9 +3,11 @@ package com.superagent.body.core.ui
 import com.superagent.body.core.events.EventBus
 import com.superagent.common.BrainEvent
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 
 /**
  * UI 状态机（docs/12 §6，复用 Kestrel AgentStateController 模式）：
@@ -113,7 +115,7 @@ class UiStateController(private val events: EventBus) {
             "blocked" -> transition(UiState.BLOCKED, ev.displayText.ifBlank { "需要处理" })
             "finish" -> when (ev.resultKind) {
                 "success" -> { unreadResult = true; transition(UiState.COMPLETED, ev.displayText.ifBlank { "已完成" }) }
-                "aborted" -> { unreadResult = true; transition(UiState.STOPPED, ev.displayText.ifBlank { "已停止" }) }
+                "aborted", "stopped" -> { unreadResult = true; transition(UiState.STOPPED, ev.displayText.ifBlank { "已停止" }) }
                 "paused" -> transition(UiState.PAUSED, ev.displayText.ifBlank { "已暂停" })
                 "unknown_side_effect" -> { unreadResult = true; transition(UiState.FAILED, ev.displayText.ifBlank { "停止中·正在确认设备状态" }) }
                 else -> { unreadResult = true; transition(UiState.FAILED, ev.displayText.ifBlank { "执行失败" }) }
@@ -129,11 +131,16 @@ class UiStateController(private val events: EventBus) {
         when (kind) {
             "pause_request" -> if (state == UiState.RUNNING || state == UiState.THINKING) transition(UiState.PAUSING, "暂停中·当前动作完成后停")
             "stop_request" -> if (state == UiState.RUNNING || state == UiState.THINKING || state == UiState.PAUSING || state == UiState.PAUSED) transition(UiState.STOPPING, "停止中")
-            "resume_request" -> if (state == UiState.PAUSED || state == UiState.PAUSING) transition(UiState.IDLE, "已恢复·输入「继续」可恢复任务")
+            // C-06 自动断点续跑尚未闭环：不得假装已恢复或承诺不可用的“继续”。
+            "resume_request" -> if (state == UiState.PAUSED) transition(UiState.PAUSED, "暂不能自动恢复·请重新发起任务")
         }
-        if (kind == "text_input" && state != UiState.RUNNING && state != UiState.THINKING) {
-            // 本地受理（300ms 反馈义务在输入侧；此处仅复位待命态）
-            transition(UiState.IDLE, "已收到 · 正在理解")
+        if (kind == "text_input") {
+            if (state == UiState.OFFLINE) {
+                transition(UiState.OFFLINE, "未发送·大脑离线")
+            } else if (state != UiState.RUNNING && state != UiState.THINKING) {
+                // 本地受理（300ms 反馈义务在输入侧；此处仅复位待命态）
+                transition(UiState.IDLE, "已收到 · 正在理解")
+            }
         }
     }
 
@@ -166,6 +173,31 @@ class UiStateController(private val events: EventBus) {
         publish()
     }
 
+    /**
+     * UI 文字指令的唯一发布口：OFFLINE 时在 EventBus 之前 fail-closed，
+     * 避免 brain 重启后跳过历史事件时 UI 却声称“已收到”。
+     */
+    @Synchronized
+    fun submitTextInput(text: String): Boolean {
+        val normalized = text.trim()
+        if (normalized.isEmpty()) return false
+        if (state == UiState.OFFLINE) {
+            transition(UiState.OFFLINE, "未发送·大脑离线")
+            return false
+        }
+        events.emit("voice", buildJsonObject { put("kind", "text_input"); put("text", normalized) })
+        return true
+    }
+
+    /** C-06 完成前不发布 resume_request：显示拒绝不能代替真实拦截。 */
+    @Synchronized
+    fun requestResume(): Boolean {
+        if (state == UiState.PAUSED) {
+            transition(UiState.PAUSED, "暂不能自动恢复·请重新发起任务")
+        }
+        return false
+    }
+
     fun setOffline() = transition(UiState.OFFLINE, "")
     fun setIdle() = transition(UiState.IDLE, "")
 
@@ -180,7 +212,7 @@ class UiStateController(private val events: EventBus) {
 
     /** FGS 通知兜底文案（docs/12 §3.1）：无 overlay 时用户仍能看到状态。 */
     fun notificationText(): String = when (state) {
-        UiState.OFFLINE -> "离线 · 大脑未连接"
+        UiState.OFFLINE -> recent.lastOrNull()?.takeIf { it.startsWith("未发送") } ?: "离线 · 大脑未连接"
         UiState.MINI -> "待命"
         UiState.IDLE -> "就绪 · 点击悬浮球或通知"
         UiState.THINKING -> "理解中 · ${recent.lastOrNull() ?: ""}"

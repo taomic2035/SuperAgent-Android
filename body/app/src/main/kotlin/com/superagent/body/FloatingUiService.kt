@@ -95,6 +95,9 @@ class FloatingUiService : android.app.Service() {
     override fun onDestroy() {
         OverlayGate.unregister()
         runCatching { ui.stop() } // U2-H05：清理监听器与定时线程
+        runCatching {
+            if (UiBus.stateController === ui) UiBus.stateController = null
+        }
         runCatching { ball?.let { wm.removeView(it) } }
         runCatching { strip?.let { wm.removeView(it) } }
         runCatching { panel?.let { wm.removeView(it) } }
@@ -282,11 +285,11 @@ class FloatingUiService : android.app.Service() {
             }
         }
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, 20, 0, 0) }
-        // I3：继续按钮——发 resume_request 解除暂停
+        // C-06 尚未闭环：继续按钮先经状态权威拒绝，不向 brain 发布假 resume。
         row.addView(Button(this).apply {
             text = "继续"
             setOnClickListener {
-                UiBus.events?.emit("voice", buildJsonObject { put("kind", "resume_request") })
+                ui.requestResume()
                 closePanel()
             }
         }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))

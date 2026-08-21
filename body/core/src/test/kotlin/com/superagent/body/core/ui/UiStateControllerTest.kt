@@ -37,6 +37,10 @@ class UiStateControllerTest {
         })
     }
 
+    private fun emitVoice(kind: String) {
+        events.emit("voice", buildJsonObject { put("kind", kind) })
+    }
+
     @Test
     fun `prompt_start 进入 THINKING`() {
         emitBrain("task-1", 1, "prompt_start", "目标：打开设置")
@@ -71,7 +75,7 @@ class UiStateControllerTest {
     }
 
     @Test
-    fun `finish aborted 进入 PAUSED`() {
+    fun `finish aborted 进入 STOPPED`() {
         emitBrain("task-1", 1, "prompt_start", "开始")
         emitBrain("task-1", 2, "finish", "用户已停止", resultKind = "aborted")
         assertEquals(UiStateController.UiState.STOPPED, controller.state)
@@ -108,10 +112,117 @@ class UiStateControllerTest {
 
     @Test
     fun `text_input 在非运行态触发 IDLE 展示`() {
+        controller.setIdle()
         events.emit("voice", buildJsonObject { put("kind", "text_input"); put("text", "打开设置") })
-        // 初始状态 OFFLINE → text_input 应让 IDLE 状态可见（但 state 可能已在 OFFLINE）
-        // 至少不应崩溃且状态合法
-        assertNotNull(controller.state)
+
+        assertEquals(UiStateController.UiState.IDLE, controller.state)
+        assertEquals("已收到 · 正在理解", controller.snapshot().currentStep)
+    }
+
+    @Test
+    fun `OFFLINE text input is rejected locally without false acknowledgement`() {
+        events.emit("voice", buildJsonObject { put("kind", "text_input"); put("text", "打开设置") })
+
+        assertEquals(UiStateController.UiState.OFFLINE, controller.state)
+        assertEquals("未发送·大脑离线", controller.snapshot().currentStep)
+        assertTrue(controller.notificationText().contains("未发送"))
+    }
+
+    @Test
+    fun `OFFLINE submitTextInput publishes no voice event`() {
+        var voiceEvents = 0
+        events.addListener { type, _ -> if (type == "voice") voiceEvents++ }
+
+        val accepted = controller.submitTextInput("打开设置")
+
+        assertFalse(accepted)
+        assertEquals(0, voiceEvents)
+        assertEquals(UiStateController.UiState.OFFLINE, controller.state)
+    }
+
+    @Test
+    fun `online submitTextInput publishes exactly one command`() {
+        controller.setIdle()
+        var voiceEvents = 0
+        events.addListener { type, _ -> if (type == "voice") voiceEvents++ }
+
+        val accepted = controller.submitTextInput("打开设置")
+
+        assertTrue(accepted)
+        assertEquals(1, voiceEvents)
+        assertEquals("已收到 · 正在理解", controller.snapshot().currentStep)
+    }
+
+    @Test
+    fun `resume request stays PAUSED when automatic resume is not yet available`() {
+        emitBrain("task-1", 1, "prompt_start", "开始")
+        emitBrain("task-1", 2, "finish", "已暂停", resultKind = "paused")
+        assertEquals(UiStateController.UiState.PAUSED, controller.state)
+
+        emitVoice("resume_request")
+
+        assertEquals(UiStateController.UiState.PAUSED, controller.state)
+        assertEquals("暂不能自动恢复·请重新发起任务", controller.snapshot().currentStep)
+    }
+
+    @Test
+    fun `requestResume publishes no event before C06 is implemented`() {
+        emitBrain("task-1", 1, "prompt_start", "开始")
+        emitBrain("task-1", 2, "finish", "已暂停", resultKind = "paused")
+        var voiceEvents = 0
+        events.addListener { type, _ -> if (type == "voice") voiceEvents++ }
+
+        val accepted = controller.requestResume()
+
+        assertFalse(accepted)
+        assertEquals(0, voiceEvents)
+        assertEquals(UiStateController.UiState.PAUSED, controller.state)
+    }
+
+    @Test
+    fun `resume request during PAUSING is ignored until pause settles`() {
+        emitBrain("task-1", 1, "prompt_start", "开始")
+        emitBrain("task-1", 2, "act", "执行中")
+        emitVoice("pause_request")
+        assertEquals(UiStateController.UiState.PAUSING, controller.state)
+
+        emitVoice("resume_request")
+
+        assertEquals(UiStateController.UiState.PAUSING, controller.state)
+        assertEquals("暂停中·当前动作完成后停", controller.snapshot().currentStep)
+    }
+
+    @Test
+    fun `finish stopped alias enters STOPPED`() {
+        emitBrain("task-1", 1, "prompt_start", "开始")
+
+        emitBrain("task-1", 2, "finish", "用户已停止", resultKind = "stopped")
+
+        assertEquals(UiStateController.UiState.STOPPED, controller.state)
+    }
+
+    @Test
+    fun `pause request settles RUNNING through PAUSING to PAUSED`() {
+        emitBrain("task-1", 1, "prompt_start", "开始")
+        emitBrain("task-1", 2, "act", "执行中")
+
+        emitVoice("pause_request")
+        assertEquals(UiStateController.UiState.PAUSING, controller.state)
+
+        emitBrain("task-1", 3, "finish", "已暂停", resultKind = "paused")
+        assertEquals(UiStateController.UiState.PAUSED, controller.state)
+    }
+
+    @Test
+    fun `stop request settles RUNNING through STOPPING to STOPPED`() {
+        emitBrain("task-1", 1, "prompt_start", "开始")
+        emitBrain("task-1", 2, "act", "执行中")
+
+        emitVoice("stop_request")
+        assertEquals(UiStateController.UiState.STOPPING, controller.state)
+
+        emitBrain("task-1", 3, "finish", "已停止", resultKind = "aborted")
+        assertEquals(UiStateController.UiState.STOPPED, controller.state)
     }
 
     @Test
